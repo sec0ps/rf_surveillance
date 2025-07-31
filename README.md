@@ -350,22 +350,34 @@ python3 -m pytest tests/
 - **Regular Cleanup**: Implement data retention policies
 - **Secure Transfer**: Use encrypted channels for remote access
 
+## Disclaimer
+
+This tool is for educational and research purposes only. Users are responsible for how they deploy and use this system. Always obtain proper authorization before deploying in production environments.
+
+## Contact
+For professional services, integrations, or support contact: operations@redcellsecurity.org
+
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+**Author**: Keith Pachulski  
+**Company**: Red Cell Security, LLC  
+**Email**: keith@redcellsecurity.org  
+**Website**: www.redcellsecurity.org  
 
-## Support
+© 2025 Keith Pachulski. All rights reserved.
 
-For technical support and questions:
-- **Documentation**: Check this README and inline code comments
-- **Issues**: Submit issues via GitHub issue tracker
-- **Testing**: Run comprehensive test suite before reporting bugs
+**License**: This software is licensed under the MIT License. You are free to use, modify, and distribute this software in accordance with the terms of the license.
 
-## Acknowledgments
+## Support My Work
 
-- **GNU Radio Community**: For the excellent SDR framework
-- **HackRF Project**: For accessible SDR hardware
-- **Security Research Community**: For RF security insights and methodologies
+If you find my work useful and want to support continued development, you can donate here:
+
+[![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://paypal.me/sec0ps)
+
+> **DISCLAIMER**:  
+> This software is provided "as-is," without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the authors or copyright holders
+> be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use or other dealings in the software.
+> This tool is for educational and research purposes only. Users are responsible for how they deploy and use this honeypot system. Always obtain proper authorization before deploying honeypots in production environments.
 
 ---
 
