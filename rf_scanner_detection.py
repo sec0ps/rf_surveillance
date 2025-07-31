@@ -350,31 +350,166 @@ class RFScannerDetector:
         # Control flags
         self.is_running = False
         self.detection_thread = None
-    
+
     def _load_config(self, config_file: str) -> Dict:
         """Load configuration from JSON file"""
         default_config = {
             'sample_rate': 2e6,
             'gain': 20,
             'frequency_ranges': [
-                [30e6, 50e6],      # VHF Low
-                [144e6, 174e6],    # VHF High
-                [420e6, 450e6],    # UHF
-                [902e6, 928e6]     # ISM Band
+                # VHF Low Band (Public Safety, Marine, Aviation)
+                [30e6, 50e6],
+                
+                # VHF High Band (Public Safety, Business, Marine)
+                [138e6, 174e6],
+                
+                # UHF Band (Public Safety, Business, GMRS/FRS)
+                [420e6, 470e6],
+                
+                # 700 MHz Public Safety Band
+                [763e6, 775e6],   # Narrowband
+                [793e6, 805e6],   # Narrowband
+                
+                # 800 MHz Trunked Systems
+                [806e6, 824e6],   # Public Safety
+                [851e6, 869e6],   # Public Safety
+                
+                # 900 MHz ISM Band (Industrial, Scientific, Medical)
+                [902e6, 928e6],
+                
+                # Additional Business/Industrial Bands
+                [450e6, 470e6],   # UHF Business
+                [470e6, 512e6],   # UHF T-Band (varies by region)
+                
+                # Aircraft Band (if monitoring aviation)
+                [118e6, 137e6],   # VHF Aviation
+                
+                # Marine VHF
+                [156e6, 162e6],   # Marine VHF
+                
+                # Amateur Radio Bands (potential scanner targets)
+                [144e6, 148e6],   # VHF Amateur
+                [420e6, 450e6],   # UHF Amateur
+                
+                # MURS (Multi-Use Radio Service)
+                [151e6, 154e6],
+                
+                # Paging/Data
+                [929e6, 932e6],   # Paging
+                
+                # Remote Control Frequencies
+                [26e6, 27e6],     # CB Radio
+                [49e6, 50e6],     # Remote Control
+                [72e6, 76e6],     # Remote Control
+                [315e6, 316e6],   # ISM Remote Control
+                [433e6, 434e6],   # ISM Remote Control
             ],
-            'sweep_step': 1e6,
-            'sweep_dwell_time': 0.5
+            'sweep_step': 25e3,  # 25 kHz steps for better resolution
+            'sweep_dwell_time': 0.5,
+            'detection_thresholds': {
+                'signal_threshold': -70,
+                'min_hop_rate': 5,
+                'max_dwell_time': 2.0,
+                'active_probe_threshold': -40,
+                'confidence_threshold': 0.7
+            },
+            'system_settings': {
+                'log_level': 'INFO',
+                'database_retention_days': 30,
+                'alert_cooldown_seconds': 60,
+                'max_detections_per_minute': 10
+            },
+            'frequency_labels': {
+                'VHF_LOW': [30e6, 50e6],
+                'VHF_HIGH': [138e6, 174e6], 
+                'UHF_BUSINESS': [420e6, 470e6],
+                'UHF_PUBLIC_SAFETY': [450e6, 470e6],
+                'GMRS_FRS': [462e6, 467e6],
+                'ISM_900': [902e6, 928e6],
+                'AVIATION': [118e6, 137e6],
+                'MARINE': [156e6, 162e6],
+                'PUBLIC_SAFETY_700': [763e6, 805e6],
+                'PUBLIC_SAFETY_800': [806e6, 869e6],
+                'AMATEUR_VHF': [144e6, 148e6],
+                'AMATEUR_UHF': [420e6, 450e6],
+                'MURS': [151e6, 154e6],
+                'PAGING': [929e6, 932e6],
+                'REMOTE_CONTROL': [315e6, 316e6, 433e6, 434e6]
+            }
         }
         
         try:
             with open(config_file, 'r') as f:
                 config = json.load(f)
-                default_config.update(config)
+                # Merge with defaults, allowing user config to override
+                for key, value in config.items():
+                    default_config[key] = value
+                logger.info(f"Loaded configuration from {config_file}")
         except FileNotFoundError:
-            logger.info(f"Config file {config_file} not found, using defaults")
-            # Save default config
-            with open(config_file, 'w') as f:
-                json.dump(default_config, f, indent=2)
+            logger.info(f"Config file {config_file} not found, creating default configuration")
+            
+            # Create default config file with comments
+            config_with_comments = {
+                "_comment_sample_rate": "Sample rate in Hz (2 MHz recommended)",
+                "sample_rate": default_config['sample_rate'],
+                
+                "_comment_gain": "RF gain setting (0-40 dB, start with 20)",
+                "gain": default_config['gain'],
+                
+                "_comment_frequency_ranges": "Frequency ranges to monitor [start_hz, end_hz]",
+                "frequency_ranges": default_config['frequency_ranges'],
+                
+                "_comment_sweep_step": "Frequency step size in Hz (25 kHz recommended)",
+                "sweep_step": default_config['sweep_step'],
+                
+                "_comment_sweep_dwell_time": "Time to spend on each frequency in seconds",
+                "sweep_dwell_time": default_config['sweep_dwell_time'],
+                
+                "_comment_detection_thresholds": "Thresholds for various detection algorithms",
+                "detection_thresholds": default_config['detection_thresholds'],
+                
+                "_comment_system_settings": "General system configuration",
+                "system_settings": default_config['system_settings'],
+                
+                "_comment_frequency_labels": "Human-readable labels for frequency ranges",
+                "frequency_labels": default_config['frequency_labels'],
+                
+                "_usage_note": "Edit frequency_ranges to focus on specific bands of interest",
+                "_legal_note": "Ensure compliance with local RF monitoring regulations"
+            }
+            
+            # Save comprehensive default config
+            try:
+                with open(config_file, 'w') as f:
+                    json.dump(config_with_comments, f, indent=2)
+                logger.info(f"Created default configuration file: {config_file}")
+            except Exception as e:
+                logger.error(f"Failed to create config file: {e}")
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in config file {config_file}: {e}")
+            logger.info("Using default configuration")
+        except Exception as e:
+            logger.error(f"Error loading config file {config_file}: {e}")
+            logger.info("Using default configuration")
+        
+        # Validate frequency ranges
+        validated_ranges = []
+        for freq_range in default_config['frequency_ranges']:
+            if len(freq_range) == 2 and freq_range[0] < freq_range[1]:
+                # Ensure frequency range is within HackRF capabilities (1 MHz - 6 GHz)
+                start_freq = max(freq_range[0], 1e6)
+                end_freq = min(freq_range[1], 6e9)
+                if start_freq < end_freq:
+                    validated_ranges.append([start_freq, end_freq])
+            else:
+                logger.warning(f"Invalid frequency range: {freq_range}")
+        
+        default_config['frequency_ranges'] = validated_ranges
+        
+        # Log configuration summary
+        total_bandwidth = sum(r[1] - r[0] for r in validated_ranges) / 1e6
+        logger.info(f"Configuration loaded: {len(validated_ranges)} frequency ranges, {total_bandwidth:.1f} MHz total bandwidth")
         
         return default_config
     
