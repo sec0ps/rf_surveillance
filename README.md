@@ -78,7 +78,7 @@ hackrf_info
 
 ### 4. Clone Repository
 ```bash
-git clone <repository-url>
+git clone https://github.com/sec0ps/rf_surveillance.git
 cd rf-scanner-detection
 ```
 
