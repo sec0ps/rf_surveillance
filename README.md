@@ -1,6 +1,6 @@
 # RF Scanner Detection System
 
-A comprehensive passive RF surveillance detection system designed to identify malicious radio frequency scanning and monitoring activities using HackRF One SDR hardware.
+A passive RF surveillance detection system designed to identify malicious radio frequency scanning and monitoring activities using HackRF One SDR hardware.
 
 ## Overview
 
