@@ -253,7 +253,12 @@ class HackRFController:
         self.center_freq = 400e6  # Starting frequency
         self.is_running = False
         self.data_queue = queue.Queue(maxsize=100)
-
+        self.tb = None
+        self.osmosdr_source = None
+        self.stream_to_vector = None
+        self.fft_block = None
+        self.vector_sink = None
+        
     def setup_flowgraph(self):
         """Setup GNU Radio flowgraph for HackRF"""
         try:
@@ -302,17 +307,34 @@ class HackRFController:
             logger.error(f"Failed to setup HackRF: {e}")
             return False
     
+    def start_acquisition(self):
+        """Start RF data acquisition"""
+        if not self.setup_flowgraph():
+            return False
+            
+        try:
+            self.tb.start()
+            self.is_running = True
+            logger.info(f"Started RF acquisition at {self.center_freq/1e6:.1f} MHz")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start acquisition: {e}")
+            return False
+    
     def stop_acquisition(self):
         """Stop RF data acquisition"""
-        if self.is_running:
-            self.tb.stop()
-            self.tb.wait()
-            self.is_running = False
-            logger.info("Stopped RF acquisition")
+        if self.is_running and self.tb:
+            try:
+                self.tb.stop()
+                self.tb.wait()
+                self.is_running = False
+                logger.info("Stopped RF acquisition")
+            except Exception as e:
+                logger.error(f"Error stopping acquisition: {e}")
     
     def get_fft_data(self) -> Optional[np.ndarray]:
         """Get latest FFT data from HackRF"""
-        if not self.is_running:
+        if not self.is_running or not self.vector_sink:
             return None
             
         try:
@@ -329,10 +351,13 @@ class HackRFController:
     
     def set_frequency(self, freq: float):
         """Change center frequency"""
-        if self.is_running:
-            self.osmosdr_source.set_center_freq(freq)
-            self.center_freq = freq
-            logger.debug(f"Changed frequency to {freq/1e6:.1f} MHz")
+        if self.is_running and self.osmosdr_source:
+            try:
+                self.osmosdr_source.set_center_freq(freq)
+                self.center_freq = freq
+                logger.debug(f"Changed frequency to {freq/1e6:.1f} MHz")
+            except Exception as e:
+                logger.error(f"Error setting frequency: {e}")
 
 class RFScannerDetector:
     """Main RF scanner detection system"""
