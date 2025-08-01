@@ -49,7 +49,15 @@ from typing import Dict, List, Tuple, Optional
 import queue
 
 try:
-    from gnuradio import gr, blocks, analog, filter
+    from gnuradio import gr, blocks, analog
+    try:
+        from gnuradio import filter
+    except ImportError:
+        pass  # filter module might not be available in newer versions
+    try:
+        from gnuradio import fft
+    except ImportError:
+        pass  # fft module might be in different location
     from gnuradio import uhd
     import osmosdr
 except ImportError:
@@ -245,7 +253,7 @@ class HackRFController:
         self.center_freq = 400e6  # Starting frequency
         self.is_running = False
         self.data_queue = queue.Queue(maxsize=100)
-        
+
     def setup_flowgraph(self):
         """Setup GNU Radio flowgraph for HackRF"""
         try:
@@ -261,35 +269,37 @@ class HackRFController:
             self.osmosdr_source.set_if_gain(20, 0)
             self.osmosdr_source.set_bb_gain(20, 0)
             
-            # FFT processing
+            # FFT processing - Updated for GNU Radio 3.10+
             self.stream_to_vector = blocks.stream_to_vector(gr.sizeof_gr_complex, 1024)
-            self.fft = filter.fft_vcc(1024, True, [], False, 1)
+            
+            # Try different FFT block locations for compatibility
+            try:
+                # GNU Radio 3.10+
+                from gnuradio import fft
+                self.fft_block = fft.fft_vcc(1024, True, [], False, 1)
+            except ImportError:
+                try:
+                    # GNU Radio 3.9
+                    self.fft_block = filter.fft_vcc(1024, True, [], False, 1)
+                except AttributeError:
+                    try:
+                        # Alternative approach - use blocks.fft_vcc
+                        self.fft_block = blocks.fft_vcc(1024, True, [], False, 1)
+                    except AttributeError:
+                        raise Exception("Cannot find compatible FFT block for this GNU Radio version")
+            
             self.vector_sink = blocks.vector_sink_c(1024)
             
             # Connect blocks
             self.tb.connect(self.osmosdr_source, self.stream_to_vector)
-            self.tb.connect(self.stream_to_vector, self.fft)
-            self.tb.connect(self.fft, self.vector_sink)
+            self.tb.connect(self.stream_to_vector, self.fft_block)
+            self.tb.connect(self.fft_block, self.vector_sink)
             
             logger.info("HackRF flowgraph initialized successfully")
             return True
             
         except Exception as e:
             logger.error(f"Failed to setup HackRF: {e}")
-            return False
-    
-    def start_acquisition(self):
-        """Start RF data acquisition"""
-        if not self.setup_flowgraph():
-            return False
-            
-        try:
-            self.tb.start()
-            self.is_running = True
-            logger.info(f"Started RF acquisition at {self.center_freq/1e6:.1f} MHz")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to start acquisition: {e}")
             return False
     
     def stop_acquisition(self):
