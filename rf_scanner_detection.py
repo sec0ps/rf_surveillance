@@ -97,7 +97,7 @@ class ScanPattern:
 
 class RFSpectrumAnalyzer:
     """Core RF spectrum analysis and pattern detection"""
-    
+
     def __init__(self, sample_rate=2e6, fft_size=1024):
         self.sample_rate = sample_rate
         self.fft_size = fft_size
@@ -106,14 +106,23 @@ class RFSpectrumAnalyzer:
         self.scan_detection_window = 30  # seconds
         
         # Pattern detection parameters
-        self.min_hop_rate = 5  # hops per second to consider scanning
+        self.min_hop_rate = 8  # Increased from 5 - hops per second to consider scanning
         self.max_dwell_time = 2.0  # seconds before considering targeted
-        self.active_probe_threshold = -40  # dBm for active transmission detection
+        self.active_probe_threshold = -20  # Increased from -40 - dBm for active transmission detection
         
+        # Calibration period - ignore detections for first 30 seconds
+        self.start_time = datetime.now()
+        self.calibration_period = 30  # seconds
+
     def analyze_spectrum(self, fft_data: np.ndarray, center_freq: float) -> List[RFDetection]:
         """Analyze FFT data for scanning patterns"""
         detections = []
         current_time = datetime.now()
+        
+        # Skip detection during calibration period
+        if (current_time - self.start_time).total_seconds() < self.calibration_period:
+            logger.debug("Calibration period - skipping detection")
+            return detections
         
         # Convert FFT to power spectrum
         power_spectrum = 20 * np.log10(np.abs(fft_data) + 1e-12)
@@ -141,7 +150,7 @@ class RFSpectrumAnalyzer:
         detections.extend(self._detect_active_probes(power_spectrum, freqs, current_time))
         
         return detections
-    
+
     def _detect_scanning_patterns(self, current_time: datetime) -> List[RFDetection]:
         """Detect rapid frequency hopping patterns characteristic of scanners"""
         detections = []
@@ -155,27 +164,57 @@ class RFSpectrumAnalyzer:
             if recent_entries:
                 recent_freqs.append((freq, len(recent_entries), recent_entries[-1][1]))
         
+        # Filter out our own sweeping behavior
+        # If we're seeing signals across the entire FFT bandwidth, it's likely our own sweep
         if len(recent_freqs) > self.min_hop_rate * 5:  # 5-second window
-            # Calculate hop rate
-            hop_rate = len(recent_freqs) / 5.0
-            avg_power = np.mean([power for _, _, power in recent_freqs])
             
-            detection = RFDetection(
-                timestamp=current_time,
-                frequency=0,  # Multiple frequencies
-                signal_strength=avg_power,
-                detection_type='scanning',
-                confidence=min(0.95, hop_rate / 20.0),  # Higher hop rate = higher confidence
-                duration=5.0,
-                metadata={
-                    'hop_rate': hop_rate,
-                    'frequencies_detected': len(recent_freqs),
-                    'frequency_range': (min(recent_freqs, key=lambda x: x[0])[0],
-                                      max(recent_freqs, key=lambda x: x[0])[0])
-                }
-            )
-            detections.append(detection)
-            logger.warning(f"Scanner detected: {hop_rate:.1f} hops/sec across {len(recent_freqs)} frequencies")
+            # Check if this looks like our own frequency sweep
+            frequencies = [freq for freq, _, _ in recent_freqs]
+            freq_span = max(frequencies) - min(frequencies)
+            
+            # If frequency span is close to our sample rate, it's likely our own FFT
+            if freq_span >= self.sample_rate * 0.8:  # 80% of sample rate span
+                logger.debug("Ignoring detection - appears to be own frequency sweep")
+                return detections
+            
+            # Check for legitimate scanner patterns
+            # Real scanners typically hop between discrete channels, not continuous spectrum
+            freq_array = np.array(frequencies)
+            freq_diffs = np.diff(np.sort(freq_array))
+            
+            # Look for regular channel spacing (typical of scanners)
+            if len(freq_diffs) > 0:
+                common_steps = []
+                for step_size in [12.5e3, 25e3, 50e3, 100e3]:  # Common channel spacings
+                    close_matches = np.abs(freq_diffs - step_size) < step_size * 0.1
+                    if np.sum(close_matches) > len(freq_diffs) * 0.5:  # >50% match
+                        common_steps.append(step_size)
+            
+                # Only detect if we see regular channel spacing patterns
+                if common_steps:
+                    hop_rate = len(recent_freqs) / 5.0
+                    avg_power = np.mean([power for _, _, power in recent_freqs])
+                    
+                    # Additional validation - check if signals are strong enough to be real
+                    strong_signals = [power for _, _, power in recent_freqs if power > -60]
+                    if len(strong_signals) >= 3:  # At least 3 strong signals
+                        detection = RFDetection(
+                            timestamp=current_time,
+                            frequency=np.mean(frequencies),  # Average frequency instead of 0
+                            signal_strength=avg_power,
+                            detection_type='scanning',
+                            confidence=min(0.95, hop_rate / 50.0),  # Adjusted confidence calculation
+                            duration=5.0,
+                            metadata={
+                                'hop_rate': hop_rate,
+                                'frequencies_detected': len(recent_freqs),
+                                'frequency_range': (min(frequencies), max(frequencies)),
+                                'channel_spacing': common_steps[0] if common_steps else 0,
+                                'strong_signals': len(strong_signals)
+                            }
+                        )
+                        detections.append(detection)
+                        logger.warning(f"Scanner detected: {hop_rate:.1f} hops/sec across {len(recent_freqs)} frequencies")
         
         return detections
     
