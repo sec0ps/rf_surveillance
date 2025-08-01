@@ -1297,12 +1297,35 @@ class RFScannerDetector:
         except Exception as e:
             logger.error(f"Failed to store enhanced detection: {e}")
 
+    def check_for_updates_on_startup(self):
+        """Check for updates when system starts"""
+        
+        try:
+            from auto_updater import AutoUpdater
+            
+            updater = AutoUpdater()
+            update_check = updater.check_for_updates()
+            
+            if update_check.get('update_available'):
+                logger.info(f"Update available: v{update_check.get('remote_version')} (current: v{update_check.get('local_version')})")
+                logger.info("Run 'python auto_updater.py' to update the system")
+            else:
+                logger.info(f"System up to date: v{update_check.get('local_version')}")
+                
+        except ImportError:
+            logger.debug("Auto-updater module not available")
+        except Exception as e:
+            logger.debug(f"Update check failed: {e}")
+
 def main():
     """Main function for running the RF Scanner Detector"""
     import signal
     import sys
     
     detector = RFScannerDetector()
+    
+    # Check for updates on startup
+    detector.check_for_updates_on_startup()
     
     def signal_handler(sig, frame):
         logger.info("Shutdown signal received")
