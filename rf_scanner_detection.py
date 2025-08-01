@@ -751,22 +751,90 @@ class RFScannerDetector:
             
             # Brief pause between frequencies
             time.sleep(0.1)
-    
+
     def _alert_on_detection(self, detection: RFDetection):
-        """Handle detection alerts"""
-        alert_msg = (f"RF Scanner Detection Alert!\n"
-                    f"Type: {detection.detection_type}\n"
-                    f"Frequency: {detection.frequency/1e6:.3f} MHz\n"
-                    f"Confidence: {detection.confidence:.2f}\n"
-                    f"Signal Strength: {detection.signal_strength:.1f} dBm")
+        """Handle detection alerts with detailed fingerprinting"""
+        
+        # Get enhanced analysis if advanced features are available
+        enhanced_data = self._generate_signal_fingerprint(detection)
+        
+        # Build comprehensive alert message
+        alert_msg = f"""
+        ═══════════════════════════════════════════════════════════════
+        RF SCANNER DETECTION ALERT
+        ═══════════════════════════════════════════════════════════════
+        
+        BASIC DETECTION INFO:
+        ├─ Detection Type: {detection.detection_type.upper()}
+        ├─ Timestamp: {detection.timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}
+        ├─ Frequency: {detection.frequency/1e6:.6f} MHz
+        ├─ Signal Strength: {detection.signal_strength:.1f} dBm
+        ├─ Confidence Score: {detection.confidence:.3f} ({self._confidence_description(detection.confidence)})
+        └─ Duration: {detection.duration:.2f} seconds
+        
+        SIGNAL FINGERPRINT:
+        ├─ Signal-to-Noise Ratio: {enhanced_data.get('snr', 'Unknown'):.1f} dB
+        ├─ Bandwidth: {enhanced_data.get('bandwidth', 'Unknown'):.0f} Hz
+        ├─ Modulation Type: {enhanced_data.get('modulation_type', 'Unknown')}
+        ├─ Rise Time: {enhanced_data.get('rise_time', 'Unknown'):.4f} ms
+        ├─ Peak Frequency: {enhanced_data.get('peak_frequency', 'Unknown')/1e6:.6f} MHz
+        └─ Signal Stability: {enhanced_data.get('stability_rating', 'Unknown')}
+        
+        PATTERN ANALYSIS:
+        """
+        
+        # Add detection-specific details
+        if detection.detection_type == 'scanning':
+            metadata = detection.metadata
+            alert_msg += f"""├─ Hop Rate: {metadata.get('hop_rate', 0):.1f} channels/second
+        ├─ Frequencies Detected: {metadata.get('frequencies_detected', 0)}
+        ├─ Frequency Range: {metadata.get('frequency_range', (0,0))[0]/1e6:.3f} - {metadata.get('frequency_range', (0,0))[1]/1e6:.3f} MHz
+        ├─ Channel Spacing: {metadata.get('channel_spacing', 0)/1e3:.1f} kHz
+        └─ Scanner Type: {enhanced_data.get('scanner_classification', 'Unknown')}"""
+        
+        elif detection.detection_type == 'targeted':
+            metadata = detection.metadata
+            alert_msg += f"""├─ Dwell Time: {metadata.get('dwell_time', 0):.1f} seconds
+        ├─ Power Variance: {metadata.get('power_variance', 0):.2f} dB²
+        ├─ Sample Count: {metadata.get('sample_count', 0)}
+        └─ Monitoring Pattern: {enhanced_data.get('monitoring_pattern', 'Continuous')}"""
+        
+        elif detection.detection_type == 'active_probe':
+            metadata = detection.metadata
+            alert_msg += f"""├─ Probe Power: {metadata.get('probe_power', 0):.1f} dBm
+        ├─ Above Threshold: {metadata.get('above_threshold', 0):.1f} dB
+        ├─ Burst Duration: {detection.duration * 1000:.1f} ms
+        └─ Probe Classification: {enhanced_data.get('probe_type', 'Unknown')}"""
+        
+        # Add threat assessment
+        threat_level = self._assess_threat_level(detection, enhanced_data)
+        alert_msg += f"""
+        
+        THREAT ASSESSMENT:
+        ├─ Threat Level: {threat_level['level']} ({threat_level['score']:.2f}/10)
+        ├─ Likelihood: {threat_level['likelihood']}
+        ├─ Recommended Action: {threat_level['recommendation']}
+        └─ Follow-up: {threat_level['followup']}
+        
+        TECHNICAL DETAILS:
+        ├─ Center Frequency: {enhanced_data.get('center_frequency', 'Unknown')/1e6:.6f} MHz
+        ├─ Frequency Offset: {enhanced_data.get('frequency_offset', 0):.0f} Hz
+        ├─ Phase Noise: {enhanced_data.get('phase_noise', 'Unknown'):.3f}
+        ├─ Spectral Purity: {enhanced_data.get('spectral_purity', 'Unknown'):.2f}%
+        └─ Equipment Signature: {enhanced_data.get('equipment_signature', 'Unknown')}
+        
+        TIMING ANALYSIS:
+        ├─ Detection Latency: {enhanced_data.get('detection_latency', 'Unknown'):.2f} ms
+        ├─ Signal Onset: {enhanced_data.get('signal_onset', 'Unknown')}
+        └─ Previous Activity: {enhanced_data.get('previous_activity', 'None detected')}
+        
+        ═══════════════════════════════════════════════════════════════
+        """
         
         logger.warning(alert_msg)
         
-        # Additional alerting mechanisms could be added here:
-        # - Email notifications
-        # - SIEM integration
-        # - Slack/Teams notifications
-        # - SMS alerts for high-confidence detections
+        # Store enhanced detection data
+        self._store_enhanced_detection(detection, enhanced_data)
     
     def start_detection(self):
         """Start the RF scanner detection system"""
@@ -829,6 +897,402 @@ class RFScannerDetector:
             detections.append(detection)
         
         return detections
+
+    def _generate_signal_fingerprint(self, detection: RFDetection) -> Dict:
+        """Generate detailed signal fingerprint from detection"""
+        
+        # Get the most recent FFT data for analysis
+        fft_data = self.hackrf.get_fft_data()
+        if fft_data is None:
+            return {'error': 'No FFT data available'}
+        
+        fingerprint = {}
+        
+        try:
+            # Basic signal analysis
+            power_spectrum = 20 * np.log10(np.abs(fft_data) + 1e-12)
+            
+            # Calculate noise floor and SNR
+            noise_floor = np.percentile(power_spectrum, 10)
+            peak_power = np.max(power_spectrum)
+            fingerprint['snr'] = peak_power - noise_floor
+            fingerprint['noise_floor'] = noise_floor
+            
+            # Find peak frequency
+            peak_idx = np.argmax(power_spectrum)
+            freqs = np.fft.fftfreq(len(fft_data), 1/self.analyzer.sample_rate) + self.hackrf.center_freq
+            fingerprint['peak_frequency'] = freqs[peak_idx]
+            fingerprint['center_frequency'] = self.hackrf.center_freq
+            fingerprint['frequency_offset'] = freqs[peak_idx] - self.hackrf.center_freq
+            
+            # Calculate bandwidth (-3dB bandwidth)
+            half_max = peak_power - 3
+            above_half_max = np.where(power_spectrum > half_max)[0]
+            if len(above_half_max) > 1:
+                bandwidth_bins = above_half_max[-1] - above_half_max[0]
+                fingerprint['bandwidth'] = bandwidth_bins * (self.analyzer.sample_rate / len(fft_data))
+            else:
+                fingerprint['bandwidth'] = 0
+            
+            # Spectral analysis
+            spectral_power = np.sum(power_spectrum[power_spectrum > noise_floor + 6])
+            total_power = np.sum(power_spectrum)
+            fingerprint['spectral_purity'] = (spectral_power / total_power) * 100 if total_power > 0 else 0
+            
+            # Phase noise analysis (simplified)
+            if len(fft_data) > 100:
+                phase = np.angle(fft_data)
+                phase_diff = np.diff(np.unwrap(phase))
+                fingerprint['phase_noise'] = np.var(phase_diff)
+            else:
+                fingerprint['phase_noise'] = 0
+            
+            # Signal characteristics
+            fingerprint['rise_time'] = self._estimate_rise_time(fft_data)
+            fingerprint['modulation_type'] = self._classify_modulation(fft_data, power_spectrum)
+            fingerprint['stability_rating'] = self._assess_signal_stability(detection.frequency)
+            
+            # Equipment classification
+            fingerprint['equipment_signature'] = self._classify_equipment_signature(fingerprint)
+            fingerprint['scanner_classification'] = self._classify_scanner_type(detection, fingerprint)
+            
+            # Pattern analysis for scanning detection
+            if detection.detection_type == 'scanning':
+                fingerprint['monitoring_pattern'] = self._analyze_scanning_pattern(detection)
+            elif detection.detection_type == 'targeted':
+                fingerprint['monitoring_pattern'] = 'Targeted Monitoring'
+            elif detection.detection_type == 'active_probe':
+                fingerprint['probe_type'] = self._classify_probe_type(fingerprint)
+            
+            # Timing analysis
+            fingerprint['detection_latency'] = (datetime.now() - detection.timestamp).total_seconds() * 1000
+            fingerprint['signal_onset'] = self._estimate_signal_onset(detection.frequency)
+            fingerprint['previous_activity'] = self._check_previous_activity(detection.frequency)
+            
+        except Exception as e:
+            logger.error(f"Error generating signal fingerprint: {e}")
+            fingerprint['error'] = str(e)
+        
+        return fingerprint
+    
+    def _confidence_description(self, confidence: float) -> str:
+        """Convert confidence score to human-readable description"""
+        if confidence >= 0.9:
+            return "VERY HIGH"
+        elif confidence >= 0.8:
+            return "HIGH"
+        elif confidence >= 0.7:
+            return "MEDIUM-HIGH"
+        elif confidence >= 0.6:
+            return "MEDIUM"
+        elif confidence >= 0.5:
+            return "MEDIUM-LOW"
+        else:
+            return "LOW"
+    
+    def _estimate_rise_time(self, fft_data: np.ndarray) -> float:
+        """Estimate signal rise time from FFT data"""
+        try:
+            envelope = np.abs(fft_data)
+            if len(envelope) > 10:
+                # Find rise from 10% to 90% of peak
+                peak_val = np.max(envelope)
+                rise_10 = np.where(envelope > 0.1 * peak_val)[0]
+                rise_90 = np.where(envelope > 0.9 * peak_val)[0]
+                
+                if len(rise_10) > 0 and len(rise_90) > 0:
+                    rise_samples = rise_90[0] - rise_10[0]
+                    return (rise_samples / self.analyzer.sample_rate) * 1000  # Convert to ms
+            return 0.0
+        except:
+            return 0.0
+    
+    def _classify_modulation(self, fft_data: np.ndarray, power_spectrum: np.ndarray) -> str:
+        """Classify the modulation type based on signal characteristics"""
+        
+        # Simple modulation classification based on spectral shape
+        peak_power = np.max(power_spectrum)
+        noise_floor = np.percentile(power_spectrum, 10)
+        
+        # Count significant spectral peaks
+        peaks = np.where(power_spectrum > noise_floor + 10)[0]
+        
+        if len(peaks) == 0:
+            return "No Signal"
+        elif len(peaks) == 1:
+            return "CW/Narrow FM"
+        elif len(peaks) < 5:
+            return "FM/Digital"
+        elif len(peaks) < 20:
+            return "Wideband FM/Digital"
+        else:
+            return "Spread Spectrum/Noise"
+    
+    def _assess_signal_stability(self, frequency: float) -> str:
+        """Assess signal stability based on historical data"""
+        
+        if frequency not in self.analyzer.frequency_history:
+            return "New Signal"
+        
+        history = list(self.analyzer.frequency_history[frequency])
+        if len(history) < 3:
+            return "Insufficient Data"
+        
+        powers = [power for _, power in history[-10:]]  # Last 10 measurements
+        power_variance = np.var(powers)
+        
+        if power_variance < 1.0:
+            return "Very Stable"
+        elif power_variance < 5.0:
+            return "Stable"
+        elif power_variance < 15.0:
+            return "Moderately Stable"
+        else:
+            return "Unstable"
+    
+    def _classify_equipment_signature(self, fingerprint: Dict) -> str:
+        """Classify equipment type based on signal fingerprint"""
+        
+        phase_noise = fingerprint.get('phase_noise', 0)
+        rise_time = fingerprint.get('rise_time', 0)
+        bandwidth = fingerprint.get('bandwidth', 0)
+        
+        if phase_noise > 0.1 and rise_time < 0.1:
+            return "Professional SDR Equipment"
+        elif phase_noise < 0.01 and rise_time > 1.0:
+            return "Crystal-Controlled Scanner"
+        elif bandwidth > 100e3:
+            return "Wideband Scanner/Analyzer"
+        elif rise_time < 0.5:
+            return "Fast-Switching Scanner"
+        else:
+            return "Unknown Equipment Type"
+    
+    def _classify_scanner_type(self, detection: RFDetection, fingerprint: Dict) -> str:
+        """Classify scanner type based on detection and fingerprint"""
+        
+        if detection.detection_type == 'scanning':
+            hop_rate = detection.metadata.get('hop_rate', 0)
+            channel_spacing = detection.metadata.get('channel_spacing', 0)
+            
+            if hop_rate > 100:
+                return "High-Speed Digital Scanner"
+            elif hop_rate > 20:
+                return "Fast Analog Scanner"
+            elif channel_spacing == 25e3:
+                return "Standard Scanner (25kHz steps)"
+            elif channel_spacing == 12.5e3:
+                return "Narrowband Scanner (12.5kHz steps)"
+            else:
+                return "Custom/SDR Scanner"
+        
+        elif detection.detection_type == 'targeted':
+            dwell_time = detection.metadata.get('dwell_time', 0)
+            if dwell_time > 300:  # 5 minutes
+                return "Surveillance Receiver"
+            elif dwell_time > 60:   # 1 minute
+                return "Monitoring Scanner"
+            else:
+                return "Brief Monitor"
+        
+        elif detection.detection_type == 'active_probe':
+            probe_power = detection.metadata.get('probe_power', -100)
+            if probe_power > 10:
+                return "High-Power Probe/Jammer"
+            elif probe_power > -10:
+                return "Direction Finding Equipment"
+            else:
+                return "Low-Power Probe"
+        
+        return "Unknown Scanner Type"
+    
+    def _analyze_scanning_pattern(self, detection: RFDetection) -> str:
+        """Analyze the specific scanning pattern"""
+        
+        metadata = detection.metadata
+        hop_rate = metadata.get('hop_rate', 0)
+        freq_range = metadata.get('frequency_range', (0, 0))
+        freq_span = (freq_range[1] - freq_range[0]) / 1e6  # MHz
+        
+        if hop_rate > 50:
+            return f"Rapid Scan ({hop_rate:.1f} ch/s over {freq_span:.1f} MHz)"
+        elif hop_rate > 10:
+            return f"Medium Scan ({hop_rate:.1f} ch/s over {freq_span:.1f} MHz)"
+        else:
+            return f"Slow Scan ({hop_rate:.1f} ch/s over {freq_span:.1f} MHz)"
+    
+    def _classify_probe_type(self, fingerprint: Dict) -> str:
+        """Classify the type of active probe"""
+        
+        bandwidth = fingerprint.get('bandwidth', 0)
+        rise_time = fingerprint.get('rise_time', 0)
+        
+        if bandwidth > 1e6:  # > 1 MHz bandwidth
+            return "Wideband Probe/Jammer"
+        elif rise_time < 0.1:  # < 0.1 ms rise time
+            return "Fast Direction Finding Probe"
+        elif bandwidth < 25e3:  # < 25 kHz bandwidth
+            return "Narrowband Test Signal"
+        else:
+            return "Standard RF Probe"
+    
+    def _estimate_signal_onset(self, frequency: float) -> str:
+        """Estimate when signal first appeared"""
+        
+        if frequency not in self.analyzer.frequency_history:
+            return "Just Detected"
+        
+        history = list(self.analyzer.frequency_history[frequency])
+        if len(history) == 0:
+            return "Just Detected"
+        
+        first_detection = history[0][0]
+        time_since_first = (datetime.now() - first_detection).total_seconds()
+        
+        if time_since_first < 5:
+            return f"First seen {time_since_first:.1f}s ago"
+        elif time_since_first < 60:
+            return f"First seen {time_since_first:.0f}s ago"
+        elif time_since_first < 3600:
+            return f"First seen {time_since_first/60:.1f}m ago"
+        else:
+            return f"First seen {time_since_first/3600:.1f}h ago"
+    
+    def _check_previous_activity(self, frequency: float) -> str:
+        """Check for previous activity on this frequency"""
+        
+        # Query database for historical activity
+        try:
+            conn = sqlite3.connect(self.detection_db)
+            cursor = conn.cursor()
+            
+            # Look for detections on this frequency in the last 24 hours
+            yesterday = datetime.now() - timedelta(hours=24)
+            cursor.execute('''
+                SELECT COUNT(*), MAX(timestamp), detection_type 
+                FROM detections 
+                WHERE frequency BETWEEN ? AND ? AND timestamp > ?
+                GROUP BY detection_type
+            ''', (frequency - 1000, frequency + 1000, yesterday.isoformat()))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            if not results:
+                return "No previous activity"
+            
+            activity_summary = []
+            for count, last_time, det_type in results:
+                activity_summary.append(f"{count} {det_type} detections")
+            
+            return f"Last 24h: {', '.join(activity_summary)}"
+            
+        except Exception as e:
+            return f"History check failed: {e}"
+    
+    def _assess_threat_level(self, detection: RFDetection, fingerprint: Dict) -> Dict:
+        """Comprehensive threat level assessment"""
+        
+        base_score = detection.confidence * 5  # Start with confidence-based score
+        
+        # Adjust score based on detection type
+        if detection.detection_type == 'scanning':
+            hop_rate = detection.metadata.get('hop_rate', 0)
+            if hop_rate > 100:
+                base_score += 3  # Very fast scanning is more concerning
+            elif hop_rate > 20:
+                base_score += 2
+            else:
+                base_score += 1
+        
+        elif detection.detection_type == 'targeted':
+            dwell_time = detection.metadata.get('dwell_time', 0)
+            if dwell_time > 300:  # 5+ minutes of monitoring
+                base_score += 4
+            elif dwell_time > 60:  # 1+ minute
+                base_score += 2
+            else:
+                base_score += 1
+        
+        elif detection.detection_type == 'active_probe':
+            probe_power = detection.metadata.get('probe_power', -100)
+            if probe_power > 10:
+                base_score += 4  # High power probes are very concerning
+            elif probe_power > 0:
+                base_score += 3
+            else:
+                base_score += 2
+        
+        # Adjust for signal characteristics
+        snr = fingerprint.get('snr', 0)
+        if snr > 30:  # Very strong signal
+            base_score += 1
+        
+        # Cap score at 10
+        final_score = min(base_score, 10)
+        
+        # Determine threat level and recommendations
+        if final_score >= 8:
+            level = "CRITICAL"
+            likelihood = "High probability of active surveillance"
+            recommendation = "Immediate investigation required"
+            followup = "Consider operational security measures"
+        elif final_score >= 6:
+            level = "HIGH"
+            likelihood = "Likely surveillance activity"
+            recommendation = "Investigate and monitor closely"
+            followup = "Review communication security"
+        elif final_score >= 4:
+            level = "MEDIUM"
+            likelihood = "Possible scanning activity"
+            recommendation = "Continue monitoring"
+            followup = "Document patterns for analysis"
+        else:
+            level = "LOW"
+            likelihood = "May be routine scanner usage"
+            recommendation = "Normal monitoring"
+            followup = "Log for trend analysis"
+        
+        return {
+            'score': final_score,
+            'level': level,
+            'likelihood': likelihood,
+            'recommendation': recommendation,
+            'followup': followup
+        }
+    
+    def _store_enhanced_detection(self, detection: RFDetection, enhanced_data: Dict):
+        """Store enhanced detection data in database"""
+        
+        # Update detection metadata with enhanced data
+        enhanced_metadata = detection.metadata.copy()
+        enhanced_metadata['fingerprint'] = enhanced_data
+        enhanced_metadata['enhanced_analysis_timestamp'] = datetime.now().isoformat()
+        
+        # Update database record if it exists, or create new enhanced record
+        try:
+            conn = sqlite3.connect(self.detection_db)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO detections 
+                (timestamp, frequency, signal_strength, detection_type, confidence, duration, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                detection.timestamp.isoformat(),
+                detection.frequency,
+                detection.signal_strength,
+                f"{detection.detection_type}_enhanced",
+                detection.confidence,
+                detection.duration,
+                json.dumps(enhanced_metadata)
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Failed to store enhanced detection: {e}")
 
 def main():
     """Main function for running the RF Scanner Detector"""
