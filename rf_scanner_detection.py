@@ -766,42 +766,45 @@ class RFScannerDetector:
         
         BASIC DETECTION INFO:
         ├─ Detection Type: {detection.detection_type.upper()}
-        ├─ Timestamp: {detection.timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}
+        ├─ Timestamp: {detection.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
         ├─ Frequency: {detection.frequency/1e6:.6f} MHz
         ├─ Signal Strength: {detection.signal_strength:.1f} dBm
         ├─ Confidence Score: {detection.confidence:.3f} ({self._confidence_description(detection.confidence)})
         └─ Duration: {detection.duration:.2f} seconds
         
         SIGNAL FINGERPRINT:
-        ├─ Signal-to-Noise Ratio: {enhanced_data.get('snr', 'Unknown'):.1f} dB
-        ├─ Bandwidth: {enhanced_data.get('bandwidth', 'Unknown'):.0f} Hz
+        ├─ Signal-to-Noise Ratio: {enhanced_data.get('snr', 0):.1f} dB
+        ├─ Bandwidth: {enhanced_data.get('bandwidth', 0):.0f} Hz
         ├─ Modulation Type: {enhanced_data.get('modulation_type', 'Unknown')}
-        ├─ Rise Time: {enhanced_data.get('rise_time', 'Unknown'):.4f} ms
-        ├─ Peak Frequency: {enhanced_data.get('peak_frequency', 'Unknown')/1e6:.6f} MHz
+        ├─ Rise Time: {enhanced_data.get('rise_time', 0):.4f} ms
+        ├─ Peak Frequency: {enhanced_data.get('peak_frequency', 0)/1e6:.6f} MHz
         └─ Signal Stability: {enhanced_data.get('stability_rating', 'Unknown')}
         
-        PATTERN ANALYSIS:
-        """
+        PATTERN ANALYSIS:"""
         
         # Add detection-specific details
         if detection.detection_type == 'scanning':
             metadata = detection.metadata
-            alert_msg += f"""├─ Hop Rate: {metadata.get('hop_rate', 0):.1f} channels/second
+            freq_range = metadata.get('frequency_range', (0, 0))
+            alert_msg += f"""
+        ├─ Hop Rate: {metadata.get('hop_rate', 0):.1f} channels/second
         ├─ Frequencies Detected: {metadata.get('frequencies_detected', 0)}
-        ├─ Frequency Range: {metadata.get('frequency_range', (0,0))[0]/1e6:.3f} - {metadata.get('frequency_range', (0,0))[1]/1e6:.3f} MHz
+        ├─ Frequency Range: {freq_range[0]/1e6:.3f} - {freq_range[1]/1e6:.3f} MHz
         ├─ Channel Spacing: {metadata.get('channel_spacing', 0)/1e3:.1f} kHz
         └─ Scanner Type: {enhanced_data.get('scanner_classification', 'Unknown')}"""
         
         elif detection.detection_type == 'targeted':
             metadata = detection.metadata
-            alert_msg += f"""├─ Dwell Time: {metadata.get('dwell_time', 0):.1f} seconds
+            alert_msg += f"""
+        ├─ Dwell Time: {metadata.get('dwell_time', 0):.1f} seconds
         ├─ Power Variance: {metadata.get('power_variance', 0):.2f} dB²
         ├─ Sample Count: {metadata.get('sample_count', 0)}
         └─ Monitoring Pattern: {enhanced_data.get('monitoring_pattern', 'Continuous')}"""
         
         elif detection.detection_type == 'active_probe':
             metadata = detection.metadata
-            alert_msg += f"""├─ Probe Power: {metadata.get('probe_power', 0):.1f} dBm
+            alert_msg += f"""
+        ├─ Probe Power: {metadata.get('probe_power', 0):.1f} dBm
         ├─ Above Threshold: {metadata.get('above_threshold', 0):.1f} dB
         ├─ Burst Duration: {detection.duration * 1000:.1f} ms
         └─ Probe Classification: {enhanced_data.get('probe_type', 'Unknown')}"""
@@ -817,14 +820,14 @@ class RFScannerDetector:
         └─ Follow-up: {threat_level['followup']}
         
         TECHNICAL DETAILS:
-        ├─ Center Frequency: {enhanced_data.get('center_frequency', 'Unknown')/1e6:.6f} MHz
+        ├─ Center Frequency: {enhanced_data.get('center_frequency', 0)/1e6:.6f} MHz
         ├─ Frequency Offset: {enhanced_data.get('frequency_offset', 0):.0f} Hz
-        ├─ Phase Noise: {enhanced_data.get('phase_noise', 'Unknown'):.3f}
-        ├─ Spectral Purity: {enhanced_data.get('spectral_purity', 'Unknown'):.2f}%
+        ├─ Phase Noise: {enhanced_data.get('phase_noise', 0):.3f}
+        ├─ Spectral Purity: {enhanced_data.get('spectral_purity', 0):.2f}%
         └─ Equipment Signature: {enhanced_data.get('equipment_signature', 'Unknown')}
         
         TIMING ANALYSIS:
-        ├─ Detection Latency: {enhanced_data.get('detection_latency', 'Unknown'):.2f} ms
+        ├─ Detection Latency: {enhanced_data.get('detection_latency', 0):.2f} ms
         ├─ Signal Onset: {enhanced_data.get('signal_onset', 'Unknown')}
         └─ Previous Activity: {enhanced_data.get('previous_activity', 'None detected')}
         
