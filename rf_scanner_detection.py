@@ -215,7 +215,7 @@ class RFSpectrumAnalyzer:
                     logger.warning(f"Targeted monitoring detected on {freq/1e6:.3f} MHz for {time_span:.1f}s")
         
         return detections
-    
+
     def _detect_active_probes(self, power_spectrum: np.ndarray, freqs: np.ndarray, current_time: datetime) -> List[RFDetection]:
         """Detect active RF probes/transmissions that might be scanner-generated"""
         detections = []
@@ -223,26 +223,96 @@ class RFSpectrumAnalyzer:
         # Look for strong, brief signals that might be active probes
         strong_signals = np.where(power_spectrum > self.active_probe_threshold)[0]
         
+        # Additional filtering to reduce false positives
+        if len(strong_signals) == 0:
+            return detections
+        
+        # Calculate noise floor to distinguish real signals from noise
+        noise_floor = np.percentile(power_spectrum, 10)  # 10th percentile as noise estimate
+        dynamic_threshold = noise_floor + 30  # Signal must be 30 dB above noise floor
+        
+        # Apply dynamic threshold
+        strong_signals = np.where(power_spectrum > max(self.active_probe_threshold, dynamic_threshold))[0]
+        
+        # Limit detections to prevent spam
+        if len(strong_signals) > 10:  # If too many signals, likely interference
+            # Only take the strongest signals
+            signal_powers = power_spectrum[strong_signals]
+            top_indices = np.argsort(signal_powers)[-5:]  # Top 5 strongest
+            strong_signals = strong_signals[top_indices]
+        
         for idx in strong_signals:
             freq = freqs[idx]
             power = power_spectrum[idx]
             
-            # Check if this is a brief, strong signal (characteristic of active probes)
-            detection = RFDetection(
-                timestamp=current_time,
-                frequency=freq,
-                signal_strength=power,
-                detection_type='active_probe',
-                confidence=min(0.8, (power - self.active_probe_threshold) / 20.0),
-                duration=0.1,  # Brief probe
-                metadata={
-                    'probe_power': power,
-                    'above_threshold': power - self.active_probe_threshold
-                }
-            )
-            detections.append(detection)
+            # Additional validation - skip if signal is too consistent (likely legitimate transmission)
+            if self._is_likely_legitimate_signal(freq, power):
+                continue
+            
+            # Calculate confidence based on signal characteristics
+            confidence = self._calculate_probe_confidence(power, noise_floor, freq)
+            
+            # Only create detection if confidence is reasonable
+            if confidence > 0.5:
+                detection = RFDetection(
+                    timestamp=current_time,
+                    frequency=freq,
+                    signal_strength=power,
+                    detection_type='active_probe',
+                    confidence=confidence,
+                    duration=0.1,  # Brief probe
+                    metadata={
+                        'probe_power': power,
+                        'above_threshold': power - self.active_probe_threshold,
+                        'above_noise_floor': power - noise_floor,
+                        'noise_floor': noise_floor
+                    }
+                )
+                detections.append(detection)
         
         return detections
+
+    def _is_likely_legitimate_signal(self, freq: float, power: float) -> bool:
+        """Check if signal is likely a legitimate transmission rather than a probe"""
+        
+        # Check if frequency is in a known legitimate band
+        legitimate_bands = [
+            (88e6, 108e6),    # FM Broadcast
+            (118e6, 137e6),   # Aviation
+            (162e6, 174e6),   # Weather/Emergency
+            (470e6, 890e6),   # TV/Cellular
+        ]
+        
+        for start, end in legitimate_bands:
+            if start <= freq <= end:
+                return True
+        
+        # Check signal history for consistency (legitimate signals tend to be more stable)
+        if freq in self.frequency_history:
+            recent_powers = [p for _, p in list(self.frequency_history[freq])[-5:]]
+            if len(recent_powers) >= 3:
+                power_variance = np.var(recent_powers)
+                if power_variance < 2.0:  # Low variance suggests legitimate transmission
+                    return True
+        
+        return False
+    
+    def _calculate_probe_confidence(self, power: float, noise_floor: float, freq: float) -> float:
+        """Calculate confidence that this is an active probe"""
+        
+        # Base confidence on signal strength above noise floor
+        snr = power - noise_floor
+        base_confidence = min(0.8, snr / 40.0)  # Max confidence 0.8 for active probes
+        
+        # Reduce confidence if signal is too strong (likely legitimate transmitter)
+        if power > 10:  # Very strong signals are usually legitimate
+            base_confidence *= 0.3
+        
+        # Reduce confidence for known legitimate frequencies
+        if self._is_likely_legitimate_signal(freq, power):
+            base_confidence *= 0.2
+        
+        return max(0.0, min(1.0, base_confidence))
 
 class HackRFController:
     """HackRF device control and data acquisition"""
@@ -443,10 +513,11 @@ class RFScannerDetector:
             'sweep_dwell_time': 0.5,
             'detection_thresholds': {
                 'signal_threshold': -70,
-                'min_hop_rate': 5,
+                'min_hop_rate': 8,  # Increased from 5 to reduce false positives
                 'max_dwell_time': 2.0,
-                'active_probe_threshold': -40,
-                'confidence_threshold': 0.7
+                'active_probe_threshold': -20,  # Increased from -40 to be more selective
+                'confidence_threshold': 0.7,
+                'max_detections_per_cycle': 5  # Limit detections per analysis cycle
             },
             'system_settings': {
                 'log_level': 'INFO',
@@ -606,7 +677,7 @@ class RFScannerDetector:
         
         conn.commit()
         conn.close()
-    
+
     def _detection_loop(self):
         """Main detection loop running in separate thread"""
         logger.info("Starting RF scanner detection loop")
@@ -623,6 +694,12 @@ class RFScannerDetector:
             fft_data = self.hackrf.get_fft_data()
             if fft_data is not None:
                 detections = self.analyzer.analyze_spectrum(fft_data, current_freq)
+                
+                # Rate limiting - only process up to max_detections_per_cycle
+                max_detections = self.config.get('detection_thresholds', {}).get('max_detections_per_cycle', 5)
+                if len(detections) > max_detections:
+                    # Keep only highest confidence detections
+                    detections = sorted(detections, key=lambda d: d.confidence, reverse=True)[:max_detections]
                 
                 # Process detections
                 for detection in detections:
