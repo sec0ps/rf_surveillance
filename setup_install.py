@@ -584,13 +584,13 @@ Categories=Network;Security;
         print(f"   {sys.executable} auto_updater.py --check")
         print()
         print("Configuration Files:")
-        print(" rf_config.json - System configuration")
-        print(" rf_detections.db - Detection database")
-        print(" rf_scanner_detection.log - System logs")
+        print("• rf_config.json - System configuration")
+        print("• rf_detections.db - Detection database")
+        print("• rf_scanner_detection.log - System logs")
         print()
         print("Documentation:")
-        print(" README.md - Complete usage guide")
-        print(f" {self.install_log} - Installation log")
+        print("• README.md - Complete usage guide")
+        print(f"• {self.install_log} - Installation log")
         print()
         if self.os_type == 'linux':
             print("IMPORTANT: Log out and back in for HackRF permissions to take effect")
@@ -658,5 +658,4 @@ def main():
         sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
-
     main()
