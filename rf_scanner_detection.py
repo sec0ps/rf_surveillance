@@ -1183,6 +1183,31 @@ class RFScannerDetector:
         
         return default_config
 
+    def _make_json_serializable(self, obj):
+        """Convert NumPy types and other non-serializable objects to JSON-compatible types"""
+        
+        if isinstance(obj, dict):
+            return {key: self._make_json_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_json_serializable(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(self._make_json_serializable(item) for item in obj)
+        elif isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.bool_, bool)):
+            return bool(obj)
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif obj is None or isinstance(obj, (str, int, float)):
+            return obj
+        else:
+            # For any other types, convert to string as fallback
+            return str(obj)
+
     def _classify_scanner_hardware(self, fingerprint: Dict) -> str:
         """Classify scanner hardware based on fingerprint"""
         
@@ -1379,6 +1404,9 @@ class RFScannerDetector:
             'analysis_timestamp': datetime.now().isoformat()
         })
         
+        # Convert to JSON-serializable format
+        serializable_metadata = self._make_json_serializable(enhanced_metadata)
+        
         # Store in database with enhanced metadata
         try:
             conn = sqlite3.connect(self.detection_db)
@@ -1395,7 +1423,7 @@ class RFScannerDetector:
                 f"{detection.detection_type}_enhanced",
                 detection.confidence,
                 detection.duration,
-                json.dumps(enhanced_metadata, default=str)
+                json.dumps(serializable_metadata)
             ))
             
             conn.commit()
@@ -1479,6 +1507,9 @@ class RFScannerDetector:
         conn = sqlite3.connect(self.detection_db)
         cursor = conn.cursor()
         
+        # Convert metadata to JSON-serializable format
+        serializable_metadata = self._make_json_serializable(detection.metadata)
+        
         cursor.execute('''
             INSERT INTO detections 
             (timestamp, frequency, signal_strength, detection_type, confidence, duration, metadata)
@@ -1490,7 +1521,7 @@ class RFScannerDetector:
             detection.detection_type,
             detection.confidence,
             detection.duration,
-            json.dumps(detection.metadata)
+            json.dumps(serializable_metadata)
         ))
         
         conn.commit()
