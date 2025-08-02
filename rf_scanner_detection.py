@@ -152,16 +152,15 @@ class RFSpectrumAnalyzer:
         detections.extend(self._detect_targeted_monitoring(current_time))
         detections.extend(self._detect_active_probes(power_spectrum, freqs, current_time))
         
-        # Generate enhanced fingerprints for each detection
+        # Generate enhanced fingerprints for ALL detections
         for detection in detections:
-            if detection.confidence > 0.7:  # Only fingerprint high-confidence detections
-                fingerprint = self.generate_enhanced_fingerprint(fft_data, center_freq, detection.metadata)
-                detection.metadata['enhanced_fingerprint'] = fingerprint
-                
-                # Store for device tracking
-                device_id = fingerprint.get('device_id')
-                if device_id:
-                    self._update_device_tracking(device_id, fingerprint, detection)
+            fingerprint = self.generate_enhanced_fingerprint(fft_data, center_freq, detection.metadata)
+            detection.metadata['enhanced_fingerprint'] = fingerprint
+            
+            # Store for device tracking
+            device_id = fingerprint.get('device_id')
+            if device_id:
+                self._update_device_tracking(device_id, fingerprint, detection)
         
         return detections
 
