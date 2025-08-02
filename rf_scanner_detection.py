@@ -96,8 +96,6 @@ class ScanPattern:
     pattern_type: str
 
 class RFSpectrumAnalyzer:
-    """Core RF spectrum analysis and pattern detection"""
-
     def __init__(self, sample_rate=2e6, fft_size=1024):
         self.sample_rate = sample_rate
         self.fft_size = fft_size
@@ -113,6 +111,8 @@ class RFSpectrumAnalyzer:
         # Calibration period - ignore detections for first 30 seconds
         self.start_time = datetime.now()
         self.calibration_period = 30  # seconds
+
+        self.device_tracking = {}
 
     def analyze_spectrum(self, fft_data: np.ndarray, center_freq: float) -> List[RFDetection]:
         """Analyze FFT data for scanning patterns with enhanced fingerprinting"""
@@ -1330,6 +1330,39 @@ class RFScannerDetector:
         except Exception as e:
             logger.error(f"Failed to store enhanced detection: {e}")
 
+    def _confidence_description(self, confidence: float) -> str:
+        """Convert confidence score to human-readable description"""
+        if confidence >= 0.9:
+            return "VERY HIGH"
+        elif confidence >= 0.8:
+            return "HIGH"
+        elif confidence >= 0.7:
+            return "MEDIUM-HIGH"
+        elif confidence >= 0.6:
+            return "MEDIUM"
+        elif confidence >= 0.5:
+            return "MEDIUM-LOW"
+        else:
+            return "LOW"
+    
+    def _assess_persistence_level(self, device_tracking: Dict) -> str:
+        """Assess how persistent this device has been"""
+        
+        detection_count = device_tracking.get('detection_count', 0)
+        first_seen = device_tracking.get('first_seen')
+        last_seen = device_tracking.get('last_seen')
+        
+        if first_seen and last_seen:
+            time_span = (last_seen - first_seen).total_seconds()
+            if time_span > 3600 and detection_count > 20:  # Active for >1 hour with many detections
+                return "HIGH (Sustained Surveillance)"
+            elif time_span > 1800 and detection_count > 10:  # Active for >30 min
+                return "MEDIUM (Extended Monitoring)"
+            elif detection_count > 5:
+                return "LOW (Brief Activity)"
+        
+        return "MINIMAL (Single Detection)"
+
     def _generate_sweep_plan(self) -> List[float]:
         """Generate frequency sweep plan based on config"""
         frequencies = []
@@ -1431,8 +1464,12 @@ class RFScannerDetector:
         enhanced_fingerprint = detection.metadata.get('enhanced_fingerprint', {})
         device_id = enhanced_fingerprint.get('device_id', 'Unknown')
         
-        # Get device tracking information
-        device_tracking = self.analyzer.device_tracking.get(device_id, {})
+        # Get device tracking information (with safety check)
+        if hasattr(self.analyzer, 'device_tracking'):
+            device_tracking = self.analyzer.device_tracking.get(device_id, {})
+        else:
+            self.analyzer.device_tracking = {}  # Initialize if missing
+            device_tracking = {}
         
         # Build comprehensive alert message
         alert_msg = f"""
@@ -1446,117 +1483,91 @@ class RFScannerDetector:
         ├─ Frequency: {detection.frequency/1e6:.6f} MHz
         ├─ Signal Strength: {detection.signal_strength:.1f} dBm
         ├─ Confidence Score: {detection.confidence:.3f} ({self._confidence_description(detection.confidence)})
-        └─ Duration: {detection.duration:.2f} seconds
+        └─ Duration: {detection.duration:.2f} seconds"""
+        
+        # Only add enhanced sections if fingerprint data is available
+        if enhanced_fingerprint:
+            alert_msg += f"""
         
         DEVICE FINGERPRINT:
         ├─ Device ID: {device_id}
-        ├─ Hardware Signature: {enhanced_fingerprint.get('dc_offset', 'N/A'):.1f} dBm DC offset
+        ├─ Hardware Signature: {enhanced_fingerprint.get('dc_offset', 'N/A')} dBm DC offset
         ├─ Estimated ADC Bits: {enhanced_fingerprint.get('estimated_adc_bits', 'Unknown')}
         ├─ Clock Precision: {enhanced_fingerprint.get('clock_precision_ppm', 'Unknown')} PPM
-        ├─ Frequency Response: {enhanced_fingerprint.get('frequency_response_flatness', 'Unknown'):.2f} dB variation
-        └─ Scanner Classification: {self._classify_scanner_hardware(enhanced_fingerprint)}
+        ├─ Frequency Response: {enhanced_fingerprint.get('frequency_response_flatness', 'Unknown')} dB variation
+        └─ Scanner Classification: {enhanced_fingerprint.get('scanner_classification', 'Unknown')}"""
+            
+            # Device tracking section
+            if device_tracking:
+                time_since_first = detection.timestamp - device_tracking['first_seen']
+                alert_msg += f"""
         
-        DEVICE TRACKING:"""
-        
-        if device_tracking:
-            time_since_first = detection.timestamp - device_tracking['first_seen']
-            alert_msg += f"""
+        DEVICE TRACKING:
         ├─ First Seen: {device_tracking['first_seen'].strftime('%Y-%m-%d %H:%M:%S')}
         ├─ Time Active: {str(time_since_first).split('.')[0]}
         ├─ Total Detections: {device_tracking['detection_count']}
-        ├─ Primary Behavior: {self.analyzer._analyze_primary_behavior(device_tracking['behavior_patterns'])}
+        ├─ Primary Behavior: {device_tracking.get('primary_behavior', 'unknown')}
         └─ Persistence Level: {self._assess_persistence_level(device_tracking)}"""
-        else:
-            alert_msg += """
+            else:
+                alert_msg += """
+        
+        DEVICE TRACKING:
         └─ Status: NEW DEVICE - First Detection"""
         
-        alert_msg += f"""
-        
-        TECHNICAL FINGERPRINT:"""
-        
-        if enhanced_fingerprint:
-            alert_msg += f"""
-        ├─ LO Phase Noise: {enhanced_fingerprint.get('lo_phase_noise_db', 'N/A'):.1f} dB
-        ├─ Image Rejection: {enhanced_fingerprint.get('image_rejection_db', 'N/A'):.1f} dB
-        ├─ Spurious Signals: {enhanced_fingerprint.get('spurious_count', 'N/A')} detected
-        ├─ Bandwidth Shape: {enhanced_fingerprint.get('bandwidth_shape', {}).get('shape_factor', 'N/A'):.2f}
-        └─ Scan Algorithm: {enhanced_fingerprint.get('scan_algorithm', 'Unknown')}"""
-        else:
-            alert_msg += """
-        └─ Enhanced fingerprint not available"""
-        
-        # Add detection-specific details with fingerprint context
+        # Basic pattern analysis (always show)
         alert_msg += f"""
         
         PATTERN ANALYSIS:"""
         
         if detection.detection_type == 'scanning':
             metadata = detection.metadata
+            freq_range = metadata.get('frequency_range', (0, 0))
             alert_msg += f"""
         ├─ Hop Rate: {metadata.get('hop_rate', 0):.1f} channels/second
         ├─ Frequencies Detected: {metadata.get('frequencies_detected', 0)}
-        ├─ Frequency Range: {metadata.get('frequency_range', (0,0))[0]/1e6:.3f} - {metadata.get('frequency_range', (0,0))[1]/1e6:.3f} MHz
-        ├─ Channel Spacing: {metadata.get('channel_spacing', 0)/1e3:.1f} kHz
-        ├─ Scan Efficiency: {enhanced_fingerprint.get('scan_efficiency', 'Unknown'):.2f}
-        └─ Hardware Type: {self._identify_scanner_hardware_type(enhanced_fingerprint)}"""
+        ├─ Frequency Range: {freq_range[0]/1e6:.3f} - {freq_range[1]/1e6:.3f} MHz
+        └─ Channel Spacing: {metadata.get('channel_spacing', 0)/1e3:.1f} kHz"""
         
         elif detection.detection_type == 'targeted':
             metadata = detection.metadata
             alert_msg += f"""
         ├─ Dwell Time: {metadata.get('dwell_time', 0):.1f} seconds
         ├─ Power Variance: {metadata.get('power_variance', 0):.2f} dB²
-        ├─ Sample Count: {metadata.get('sample_count', 0)}
-        ├─ Monitoring Consistency: {enhanced_fingerprint.get('monitoring_consistency', 'Unknown')}
-        └─ Equipment Class: {self._classify_monitoring_equipment(enhanced_fingerprint)}"""
+        └─ Sample Count: {metadata.get('sample_count', 0)}"""
         
         elif detection.detection_type == 'active_probe':
             metadata = detection.metadata
             alert_msg += f"""
         ├─ Probe Power: {metadata.get('probe_power', 0):.1f} dBm
         ├─ Above Threshold: {metadata.get('above_threshold', 0):.1f} dB
-        ├─ Burst Duration: {detection.duration * 1000:.1f} ms
-        ├─ Probe Classification: {enhanced_fingerprint.get('probe_type', 'Unknown')}
-        └─ Direction Finding: {self._assess_df_capability(enhanced_fingerprint)}"""
+        └─ Burst Duration: {detection.duration * 1000:.1f} ms"""
         
-        # Enhanced threat assessment using device history
-        threat_level = self._assess_enhanced_threat_level(detection, enhanced_fingerprint, device_tracking)
-        alert_msg += f"""
-        
-        ENHANCED THREAT ASSESSMENT:
-        ├─ Threat Level: {threat_level['level']} ({threat_level['score']:.2f}/10)
-        ├─ Device Threat Category: {threat_level['device_category']}
-        ├─ Persistence Factor: {threat_level['persistence_factor']:.2f}
-        ├─ Capability Assessment: {threat_level['capability_level']}
-        ├─ Recommended Action: {threat_level['recommendation']}
-        └─ Intelligence Value: {threat_level['intelligence_value']}
-        
-        DEVICE INTELLIGENCE:"""
-        
-        if device_tracking and len(device_tracking.get('fingerprint_evolution', [])) > 1:
-            alert_msg += f"""
-        ├─ Fingerprint Stability: {self._assess_fingerprint_stability(device_tracking)}
-        ├─ Behavior Evolution: {self._analyze_behavior_evolution(device_tracking)}
-        ├─ Equipment Consistency: {self._assess_equipment_consistency(device_tracking)}
-        └─ Operational Pattern: {self._identify_operational_pattern(device_tracking)}"""
+        # Basic threat assessment
+        confidence_level = self._confidence_description(detection.confidence)
+        if detection.confidence > 0.8:
+            threat_level = "HIGH"
+            recommendation = "Monitor closely and consider countermeasures"
+        elif detection.confidence > 0.6:
+            threat_level = "MEDIUM"
+            recommendation = "Continue monitoring"
         else:
-            alert_msg += """
-        └─ Insufficient data for intelligence analysis"""
+            threat_level = "LOW"
+            recommendation = "Log for analysis"
         
         alert_msg += f"""
         
-        COUNTERMEASURES:
-        ├─ Frequency Agility: {self._recommend_frequency_agility(detection, device_tracking)}
-        ├─ Transmission Security: {self._recommend_transmission_security(threat_level)}
-        ├─ Physical Security: {self._recommend_physical_security(threat_level)}
-        └─ Monitoring Adjustments: {self._recommend_monitoring_changes(enhanced_fingerprint)}
+        THREAT ASSESSMENT:
+        ├─ Threat Level: {threat_level}
+        ├─ Confidence: {confidence_level}
+        └─ Recommendation: {recommendation}
         
         ═══════════════════════════════════════════════════════════════
         """
         
         logger.warning(alert_msg)
         
-        # Store enhanced detection data with device tracking
-        self._store_enhanced_detection_with_tracking(detection, enhanced_fingerprint, device_tracking)
+        # Store enhanced detection data
+        self._save_detection(detection)
     
     def start_detection(self):
         """Start the RF scanner detection system"""
