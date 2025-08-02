@@ -2016,35 +2016,77 @@ class RFScannerDetector:
         except Exception as e:
             logger.error(f"Failed to store enhanced detection: {e}")
 
-    def check_for_updates_on_startup(self):
-        """Check for updates when system starts"""
-        
-        try:
-            from auto_updater import AutoUpdater
-            
-            updater = AutoUpdater()
-            update_check = updater.check_for_updates()
-            
-            if update_check.get('update_available'):
-                logger.info(f"Update available: v{update_check.get('remote_version')} (current: v{update_check.get('local_version')})")
-                logger.info("Run 'python auto_updater.py' to update the system")
+def check_for_updates():
+    """Check if a newer version is available, force update if needed, and exit after update"""
+    import os
+    import sys
+    import subprocess
+    import requests
+    
+    base_dir = os.path.dirname(__file__)
+    current_version_file = os.path.join(base_dir, 'version.txt')
+    
+    if not os.path.isfile(current_version_file):
+        print("Version file not found.")
+        return
+    
+    with open(current_version_file, 'r') as f:
+        current_version = f.read().strip()
+    
+    try:
+        response = requests.get("https://raw.githubusercontent.com/sec0ps/rf_surveillance/main/version.txt", timeout=5)
+        if response.status_code == 200:
+            latest_version = response.text.strip()
+            if latest_version != current_version:
+                print(f"Update available: {latest_version} (current: {current_version})")
+                print("Pulling latest changes from GitHub...")
+                try:
+                    # Detect venv directory to preserve
+                    venv_dirs = ['venv', '.venv', 'env']
+                    exclude_dir = None
+                    for d in venv_dirs:
+                        full_path = os.path.join(base_dir, d)
+                        if os.path.isdir(full_path):
+                            exclude_dir = d
+                            break
+                    
+                    # Perform update
+                    subprocess.run(["git", "reset", "--hard"], check=True)
+                    if exclude_dir:
+                        subprocess.run(["git", "clean", "-fd", "-e", exclude_dir], check=True)
+                    else:
+                        subprocess.run(["git", "clean", "-fd"], check=True)
+                    subprocess.run(["git", "pull"], check=True)
+                    
+                    # Update local version.txt
+                    with open(current_version_file, 'w') as f:
+                        f.write(latest_version + "\n")
+                    
+                    print("Update completed successfully.")
+                    logger.info("RF Scanner Detection updated to version %s — exiting for updates to take effect.", latest_version)
+                    sys.exit(0)
+                    
+                except subprocess.CalledProcessError as e:
+                    print(f"Git update failed: {e}")
+                    logger.error("Update failed: %s", str(e))
+                    sys.exit(1)
             else:
-                logger.info(f"System up to date: v{update_check.get('local_version')}")
-                
-        except ImportError:
-            logger.debug("Auto-updater module not available")
-        except Exception as e:
-            logger.debug(f"Update check failed: {e}")
+                print("RF Scanner Detection is up to date.")
+        else:
+            print(f"Failed to check for updates (HTTP status {response.status_code}).")
+    except Exception as e:
+        print(f"Update check error: {e}")
+        logger.warning("Update check failed: %s", str(e))
 
 def main():
     """Main function for running the RF Scanner Detector"""
     import signal
     import sys
     
-    detector = RFScannerDetector()
-    
     # Check for updates on startup
-    detector.check_for_updates_on_startup()
+    check_for_updates()
+    
+    detector = RFScannerDetector()
     
     def signal_handler(sig, frame):
         logger.info("Shutdown signal received")
