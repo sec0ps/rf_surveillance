@@ -47,6 +47,9 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 import queue
+import hashlib
+from scipy import signal
+from scipy.fft import fft, fftfreq
 
 try:
     from gnuradio import gr, blocks, analog
@@ -416,7 +419,76 @@ class RFSpectrumAnalyzer:
             }
         
         return summary
+
+    def _extract_spectral_mask(self, power_spectrum: np.ndarray) -> Dict:
+        """Extract spectral mask characteristics"""
+        # Find the main signal shape
+        peak_idx = np.argmax(power_spectrum)
+        peak_power = power_spectrum[peak_idx]
+        
+        # Analyze spectral mask at different levels
+        mask_levels = [-3, -20, -40, -60]  # dB below peak
+        mask_points = {}
+        
+        for level in mask_levels:
+            threshold = peak_power + level
+            above_threshold = np.where(power_spectrum > threshold)[0]
+            if len(above_threshold) > 0:
+                bandwidth = above_threshold[-1] - above_threshold[0]
+                mask_points[f'mask_{abs(level)}db'] = bandwidth
+        
+        return mask_points
     
+    def _classify_scan_pattern(self, detection_metadata: Dict) -> str:
+        """Classify scan pattern type"""
+        hop_rate = detection_metadata.get('hop_rate', 0)
+        freq_count = detection_metadata.get('frequencies_detected', 0)
+        
+        if hop_rate > 100:
+            return 'high_speed_scan'
+        elif hop_rate > 20:
+            return 'medium_speed_scan'
+        elif freq_count > hop_rate * 2:
+            return 'wide_range_scan'
+        else:
+            return 'sequential_scan'
+    
+    def _analyze_dwell_time_pattern(self, detection_metadata: Dict) -> str:
+        """Analyze dwell time consistency"""
+        # This would analyze the consistency of dwell times
+        # For now, return a basic assessment
+        return 'consistent'
+    
+    def _analyze_monitoring_pattern(self, detection_metadata: Dict) -> str:
+        """Analyze monitoring pattern for targeted detection"""
+        dwell_time = detection_metadata.get('dwell_time', 0)
+        power_variance = detection_metadata.get('power_variance', 0)
+        
+        if power_variance < 1.0 and dwell_time > 60:
+            return 'sustained_monitoring'
+        elif dwell_time > 10:
+            return 'brief_monitoring'
+        else:
+            return 'intermittent_monitoring'
+    
+    def _calculate_rolloff_rate(self, power_spectrum: np.ndarray, above_half_power: np.ndarray) -> float:
+        """Calculate filter rolloff rate"""
+        if len(above_half_power) == 0:
+            return 0
+        
+        # Calculate rolloff on both sides of the passband
+        center_idx = len(power_spectrum) // 2
+        left_edge = above_half_power[0]
+        right_edge = above_half_power[-1]
+        
+        # Estimate rolloff rate (dB per bin)
+        if left_edge > 0 and right_edge < len(power_spectrum) - 1:
+            left_rolloff = power_spectrum[left_edge] - power_spectrum[left_edge - 10] if left_edge >= 10 else 0
+            right_rolloff = power_spectrum[right_edge] - power_spectrum[right_edge + 10] if right_edge <= len(power_spectrum) - 11 else 0
+            return (left_rolloff + right_rolloff) / 2
+        
+        return 0
+
     def _analyze_primary_behavior(self, behavior_patterns: List[Dict]) -> str:
         """Analyze primary behavior pattern of a device"""
         
@@ -629,7 +701,7 @@ class RFSpectrumAnalyzer:
                 count += 1
         
         return image_rejection / count if count > 0 else 0
-    
+
     def _detect_spurious_signals(self, power_spectrum: np.ndarray) -> List[Dict]:
         """Detect spurious signals (clock harmonics, etc.)"""
         
@@ -637,6 +709,7 @@ class RFSpectrumAnalyzer:
         noise_floor = np.percentile(power_spectrum, 10)
         threshold = noise_floor + 20  # 20dB above noise
         
+        from scipy import signal
         peaks, properties = signal.find_peaks(power_spectrum, height=threshold, distance=5)
         
         spurs = []
@@ -682,7 +755,7 @@ class RFSpectrumAnalyzer:
             }
         
         return {'bandwidth_3db_hz': 0, 'shape_factor': 0, 'rolloff_rate': 0}
-    
+
     def _calculate_hop_rate_stability(self, hop_rate: float) -> float:
         """Calculate stability of hop rate (indicates clock quality)"""
         
@@ -735,17 +808,19 @@ class RFSpectrumAnalyzer:
             return 'parallel_scan'
         else:
             return 'sequential_scan'
-    
+
     def _analyze_phase_noise_profile(self, phase_data: np.ndarray) -> Dict:
         """Analyze phase noise characteristics"""
         
         # Remove linear phase trend
         phase_unwrapped = np.unwrap(phase_data)
+        from scipy import signal
         phase_detrended = signal.detrend(phase_unwrapped)
         
         # Calculate phase noise PSD
+        from scipy.fft import fft
         phase_psd = np.abs(fft(phase_detrended))**2
-        freqs = fftfreq(len(phase_data), 1/self.sample_rate)
+        freqs = np.fft.fftfreq(len(phase_data), 1/self.sample_rate)
         
         # Analyze at specific offset frequencies
         offset_freqs = [1e3, 10e3, 100e3]  # 1kHz, 10kHz, 100kHz offsets
