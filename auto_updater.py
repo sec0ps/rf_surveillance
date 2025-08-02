@@ -460,8 +460,8 @@ def check_and_update():
     if 'recent_commits' in update_info:
         print("\nRecent Changes:")
         for commit in update_info['recent_commits'][:3]:
-            print(f"  • {commit['message']} ({commit['sha']})")
-    
+            print(f"  - {commit['message']} ({commit['sha']})")
+
     if 'release_notes' in update_info and update_info['release_notes']:
         print(f"\nRelease Notes:\n{update_info['release_notes'][:500]}...")
     
