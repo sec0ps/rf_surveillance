@@ -103,7 +103,6 @@ class RFScannerInstaller:
             'scikit-learn>=1.0.0',
             'seaborn>=0.11.0',
             'requests>=2.25.0',
-            'packaging>=21.0',
             'psutil>=5.8.0'
         ]
     
@@ -585,13 +584,13 @@ Categories=Network;Security;
         print(f"   {sys.executable} auto_updater.py --check")
         print()
         print("Configuration Files:")
-        print("• rf_config.json - System configuration")
-        print("• rf_detections.db - Detection database")
-        print("• rf_scanner_detection.log - System logs")
+        print("Â• rf_config.json - System configuration")
+        print("Â• rf_detections.db - Detection database")
+        print("Â• rf_scanner_detection.log - System logs")
         print()
         print("Documentation:")
-        print("• README.md - Complete usage guide")
-        print(f"• {self.install_log} - Installation log")
+        print("Â• README.md - Complete usage guide")
+        print(f"Â• {self.install_log} - Installation log")
         print()
         if self.os_type == 'linux':
             print("IMPORTANT: Log out and back in for HackRF permissions to take effect")
@@ -659,4 +658,5 @@ def main():
         sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
+
     main()
