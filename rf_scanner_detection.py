@@ -1973,96 +1973,142 @@ class RFScannerDetector:
         
         # Build comprehensive alert message
         alert_msg = f"""
-        ═══════════════════════════════════════════════════════════════
-        RF SCANNER DETECTION ALERT
-        ═══════════════════════════════════════════════════════════════
+            ═══════════════════════════════════════════════════════════════
+            RF SCANNER DETECTION ALERT
+            ═══════════════════════════════════════════════════════════════
+            
+            BASIC DETECTION INFO:
+            ├─ Detection Type: {detection.detection_type.upper()}
+            ├─ Timestamp: {detection.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+            ├─ Frequency: {detection.frequency/1e6:.6f} MHz
+            ├─ Signal Strength: {detection.signal_strength:.1f} dBm
+            ├─ Confidence Score: {detection.confidence:.3f} ({self._confidence_description(detection.confidence)})
+            └─ Duration: {detection.duration:.2f} seconds"""
         
-        BASIC DETECTION INFO:
-        ├─ Detection Type: {detection.detection_type.upper()}
-        ├─ Timestamp: {detection.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
-        ├─ Frequency: {detection.frequency/1e6:.6f} MHz
-        ├─ Signal Strength: {detection.signal_strength:.1f} dBm
-        ├─ Confidence Score: {detection.confidence:.3f} ({self._confidence_description(detection.confidence)})
-        └─ Duration: {detection.duration:.2f} seconds"""
-        
-        # Only add enhanced sections if fingerprint data is available
+        # Enhanced fingerprint section with all advanced data
         if enhanced_fingerprint:
             alert_msg += f"""
-        
-        DEVICE FINGERPRINT:
-        ├─ Device ID: {device_id}
-        ├─ Hardware Signature: {enhanced_fingerprint.get('dc_offset', 'N/A')} dBm DC offset
-        ├─ Estimated ADC Bits: {enhanced_fingerprint.get('estimated_adc_bits', 'Unknown')}
-        ├─ Clock Precision: {enhanced_fingerprint.get('clock_precision_ppm', 'Unknown')} PPM
-        ├─ Frequency Response: {enhanced_fingerprint.get('frequency_response_flatness', 'Unknown')} dB variation
-        └─ Scanner Classification: {enhanced_fingerprint.get('scanner_classification', 'Unknown')}"""
             
-            # Device tracking section
+            ENHANCED DEVICE FINGERPRINT:
+            ├─ Device ID: {device_id}
+            ├─ Hardware DC Offset: {enhanced_fingerprint.get('dc_offset', 'N/A')} dBm
+            ├─ Estimated ADC Bits: {enhanced_fingerprint.get('estimated_adc_bits', 'Unknown')}
+            ├─ Clock Precision: {enhanced_fingerprint.get('clock_precision_ppm', 'Unknown')} PPM
+            ├─ Phase Noise: {enhanced_fingerprint.get('lo_phase_noise_db', 'Unknown')} dBc/Hz
+            ├─ Image Rejection: {enhanced_fingerprint.get('image_rejection_db', 'Unknown')} dB
+            ├─ Spurious Count: {enhanced_fingerprint.get('spurious_count', 'Unknown')}
+            ├─ Scanner Classification: {enhanced_fingerprint.get('scanner_classification', 'Unknown')}
+            ├─ Equipment Type: {enhanced_fingerprint.get('equipment_type', 'Unknown')}
+            └─ Sophistication Level: {enhanced_fingerprint.get('sophistication_level', 'Unknown')}
+            
+            SIGNATURE ANALYSIS:"""
+            
+            # Show signature matches if available
+            signature_matches = enhanced_fingerprint.get('signature_matches', [])
+            if signature_matches:
+                alert_msg += f"""
+            ├─ Known Scanner Matches: {len(signature_matches)}"""
+                for i, match in enumerate(signature_matches[:2]):
+                    alert_msg += f"""
+            ├─ {match['scanner_id']}: {match['similarity']:.3f} similarity"""
+            else:
+                alert_msg += """
+            ├─ Known Scanner Matches: None found"""
+            
+            # Show IOC if generated
+            threat_ioc = enhanced_fingerprint.get('threat_ioc', {})
+            if threat_ioc:
+                alert_msg += f"""
+            ├─ IOC Generated: {threat_ioc.get('id', 'Unknown')}
+            └─ IOC Threat Level: {threat_ioc.get('threat_level', 'Unknown')}"""
+            else:
+                alert_msg += """
+            └─ IOC Status: Below threshold for IOC generation"""
+                
+            # Device tracking section with enhanced analysis
             if device_tracking:
                 time_since_first = detection.timestamp - device_tracking['first_seen']
                 alert_msg += f"""
-        
-        DEVICE TRACKING:
-        ├─ First Seen: {device_tracking['first_seen'].strftime('%Y-%m-%d %H:%M:%S')}
-        ├─ Time Active: {str(time_since_first).split('.')[0]}
-        ├─ Total Detections: {device_tracking['detection_count']}
-        ├─ Primary Behavior: {device_tracking.get('primary_behavior', 'unknown')}
-        └─ Persistence Level: {self._assess_persistence_level(device_tracking)}"""
+            
+            ENHANCED DEVICE TRACKING:
+            ├─ First Seen: {device_tracking['first_seen'].strftime('%Y-%m-%d %H:%M:%S')}
+            ├─ Time Active: {str(time_since_first).split('.')[0]}
+            ├─ Total Detections: {device_tracking['detection_count']}
+            ├─ Primary Behavior: {self._analyze_primary_behavior(device_tracking.get('behavior_patterns', []))}
+            ├─ Persistence Level: {self._assess_persistence_level(device_tracking)}
+            ├─ Fingerprint Stability: {self._assess_fingerprint_stability(device_tracking)}
+            └─ Hardware Type: {self._identify_scanner_hardware_type(enhanced_fingerprint)}"""
             else:
                 alert_msg += """
-        
-        DEVICE TRACKING:
-        └─ Status: NEW DEVICE - First Detection"""
-        
-        # Basic pattern analysis (always show)
+            
+            DEVICE TRACKING:
+            └─ Status: NEW DEVICE - First Detection"""
+            
+        # Pattern analysis section
         alert_msg += f"""
-        
-        PATTERN ANALYSIS:"""
+            
+            PATTERN ANALYSIS:"""
         
         if detection.detection_type == 'scanning':
             metadata = detection.metadata
             freq_range = metadata.get('frequency_range', (0, 0))
             alert_msg += f"""
-        ├─ Hop Rate: {metadata.get('hop_rate', 0):.1f} channels/second
-        ├─ Frequencies Detected: {metadata.get('frequencies_detected', 0)}
-        ├─ Frequency Range: {freq_range[0]/1e6:.3f} - {freq_range[1]/1e6:.3f} MHz
-        └─ Channel Spacing: {metadata.get('channel_spacing', 0)/1e3:.1f} kHz"""
+            ├─ Hop Rate: {metadata.get('hop_rate', 0):.1f} channels/second
+            ├─ Frequencies Detected: {metadata.get('frequencies_detected', 0)}
+            ├─ Frequency Range: {freq_range[0]/1e6:.3f} - {freq_range[1]/1e6:.3f} MHz
+            └─ Channel Spacing: {metadata.get('channel_spacing', 0)/1e3:.1f} kHz"""
         
         elif detection.detection_type == 'targeted':
             metadata = detection.metadata
             alert_msg += f"""
-        ├─ Dwell Time: {metadata.get('dwell_time', 0):.1f} seconds
-        ├─ Power Variance: {metadata.get('power_variance', 0):.2f} dB²
-        └─ Sample Count: {metadata.get('sample_count', 0)}"""
+            ├─ Dwell Time: {metadata.get('dwell_time', 0):.1f} seconds
+            ├─ Power Variance: {metadata.get('power_variance', 0):.2f} dB²
+            └─ Sample Count: {metadata.get('sample_count', 0)}"""
         
         elif detection.detection_type == 'active_probe':
             metadata = detection.metadata
             alert_msg += f"""
-        ├─ Probe Power: {metadata.get('probe_power', 0):.1f} dBm
-        ├─ Above Threshold: {metadata.get('above_threshold', 0):.1f} dB
-        └─ Burst Duration: {detection.duration * 1000:.1f} ms"""
+            ├─ Probe Power: {metadata.get('probe_power', 0):.1f} dBm
+            ├─ Above Threshold: {metadata.get('above_threshold', 0):.1f} dB
+            └─ Burst Duration: {detection.duration * 1000:.1f} ms"""
         
-        # Basic threat assessment
-        confidence_level = self._confidence_description(detection.confidence)
-        if detection.confidence > 0.8:
-            threat_level = "HIGH"
-            recommendation = "Monitor closely and consider countermeasures"
-        elif detection.confidence > 0.6:
-            threat_level = "MEDIUM"
-            recommendation = "Continue monitoring"
+        # Enhanced threat assessment using existing method
+        if enhanced_fingerprint and device_tracking:
+            enhanced_threat = self._assess_enhanced_threat_level(detection, enhanced_fingerprint, device_tracking)
+            alert_msg += f"""
+            
+            COMPREHENSIVE THREAT ASSESSMENT:
+            ├─ Threat Score: {enhanced_threat['score']}/10
+            ├─ Threat Level: {enhanced_threat['level']}
+            ├─ Device Category: {enhanced_threat['device_category']}
+            ├─ Capability Level: {enhanced_threat['capability_level']}
+            ├─ Persistence Factor: {enhanced_threat['persistence_factor']:.2f}
+            ├─ Intelligence Value: {enhanced_threat['intelligence_value']}
+            └─ Recommendation: {enhanced_threat['recommendation']}"""
         else:
-            threat_level = "LOW"
-            recommendation = "Log for analysis"
+            # Fallback to basic threat assessment
+            confidence_level = self._confidence_description(detection.confidence)
+            if detection.confidence > 0.8:
+                threat_level = "HIGH"
+                recommendation = "Monitor closely and consider countermeasures"
+            elif detection.confidence > 0.6:
+                threat_level = "MEDIUM"
+                recommendation = "Continue monitoring"
+            else:
+                threat_level = "LOW"
+                recommendation = "Log for analysis"
+            
+            alert_msg += f"""
+            
+            THREAT ASSESSMENT:
+            ├─ Threat Level: {threat_level}
+            ├─ Confidence: {confidence_level}
+            └─ Recommendation: {recommendation}"""
         
-        alert_msg += f"""
-        
-        THREAT ASSESSMENT:
-        ├─ Threat Level: {threat_level}
-        ├─ Confidence: {confidence_level}
-        └─ Recommendation: {recommendation}
-        
-        ═══════════════════════════════════════════════════════════════
-        """
+        alert_msg += """
+            
+            ═══════════════════════════════════════════════════════════════
+            """
         
         logger.warning(alert_msg)
         
