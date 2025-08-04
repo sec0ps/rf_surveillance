@@ -67,6 +67,23 @@ except ImportError:
     print("GNU Radio not installed. Install with: pip install gnuradio")
     raise
 
+try:
+    from sklearn.cluster import DBSCAN
+    from sklearn.preprocessing import StandardScaler
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    print("scikit-learn not installed. Clustering features will be disabled.")
+    print("Install with: pip install scikit-learn")
+    SKLEARN_AVAILABLE = False
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    print("requests not installed. SIEM integration will be disabled.")
+    print("Install with: pip install requests")
+    REQUESTS_AVAILABLE = False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -114,8 +131,14 @@ class RFSpectrumAnalyzer:
         # Calibration period - ignore detections for first 30 seconds
         self.start_time = datetime.now()
         self.calibration_period = 30  # seconds
-
+    
         self.device_tracking = {}
+        
+        # ADD THESE ADVANCED COMPONENTS:
+        self.signature_database = {}
+        self.scanner_fingerprints = {}
+        self.known_scanner_signatures = {}
+        self.ioc_database = {}
 
     def analyze_spectrum(self, fft_data: np.ndarray, center_freq: float) -> List[RFDetection]:
         """Analyze FFT data for scanning patterns with enhanced fingerprinting"""
@@ -528,11 +551,267 @@ class RFSpectrumAnalyzer:
             # Generate unique device ID
             fingerprint['device_id'] = self._generate_device_id(fingerprint)
             
+            # ADD ADVANCED CLUSTERING ANALYSIS:
+            # Perform signature clustering if we have enough signatures
+            signature_list = list(self.scanner_fingerprints.values())
+            if len(signature_list) >= 3:
+                cluster_analysis = self.cluster_scanner_signatures(signature_list)
+                fingerprint['cluster_analysis'] = cluster_analysis
+                
+                # Update device classification based on clustering
+                if cluster_analysis['n_clusters'] > 0:
+                    fingerprint['device_classification'] = self._classify_device_from_fingerprint(fingerprint, cluster_analysis)
+            
+            # ADD SIGNATURE MATCHING:
+            # Match against known scanner database
+            signature_matches = self.match_signature_against_database(fingerprint)
+            fingerprint['signature_matches'] = signature_matches
+            
+            # Store fingerprint for future clustering
+            device_id = fingerprint.get('device_id')
+            if device_id:
+                self.scanner_fingerprints[device_id] = fingerprint
+            
+            # ADD IOC GENERATION:
+            # Generate IOC if this is a significant detection
+            if detection_metadata.get('confidence', 0) > 0.7:
+                ioc = self.generate_ioc_from_fingerprint(fingerprint, detection_metadata)
+                fingerprint['threat_ioc'] = ioc
+                
         except Exception as e:
             logger.error(f"Fingerprinting error: {e}")
             fingerprint['error'] = str(e)
         
         return fingerprint
+
+    def cluster_scanner_signatures(self, signatures: List[Dict]) -> Dict:
+        """Cluster similar scanner signatures to identify device types"""
+        
+        if len(signatures) < 3:
+            return {'clusters': [], 'device_types': [], 'n_clusters': 0}
+        
+        # Check if sklearn is available
+        if not SKLEARN_AVAILABLE:
+            logger.warning("scikit-learn not available - clustering disabled")
+            return {
+                'clusters': {},
+                'cluster_labels': [],
+                'n_clusters': 0,
+                'error': 'scikit-learn not installed'
+            }
+        
+        try:
+            # Convert signatures to feature matrix
+            features = []
+            for sig in signatures:
+                feature_vector = [
+                    sig.get('dc_offset', 0),
+                    sig.get('frequency_response_flatness', 0), 
+                    sig.get('phase_noise_profile', {}).get('pn_1khz', 0),
+                    sig.get('estimated_adc_bits', 8),
+                    sig.get('lo_phase_noise_db', 0),
+                    sig.get('clock_precision_ppm', 1000)
+                ]
+                features.append(feature_vector)
+            
+            features = np.array(features)
+            
+            # Normalize features
+            scaler = StandardScaler()
+            features_scaled = scaler.fit_transform(features)
+            
+            # DBSCAN clustering
+            clustering = DBSCAN(eps=0.5, min_samples=2)
+            cluster_labels = clustering.fit_predict(features_scaled)
+            
+            # Analyze clusters
+            unique_clusters = set(cluster_labels)
+            cluster_analysis = {}
+            
+            for cluster_id in unique_clusters:
+                if cluster_id == -1:  # Noise points
+                    continue
+                    
+                cluster_indices = np.where(cluster_labels == cluster_id)[0]
+                cluster_features = features[cluster_indices]
+                
+                cluster_analysis[cluster_id] = {
+                    'count': len(cluster_indices),
+                    'centroid': np.mean(cluster_features, axis=0).tolist(),
+                    'std': np.std(cluster_features, axis=0).tolist(),
+                    'device_type': self._classify_device_from_cluster(np.mean(cluster_features, axis=0))
+                }
+            
+            return {
+                'clusters': cluster_analysis,
+                'cluster_labels': cluster_labels.tolist(),
+                'n_clusters': len(unique_clusters) - (1 if -1 in unique_clusters else 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Clustering error: {e}")
+            return {
+                'clusters': {},
+                'cluster_labels': [],
+                'n_clusters': 0,
+                'error': str(e)
+            }
+    
+    def _classify_device_from_cluster(self, feature_centroid: np.ndarray) -> str:
+        """Classify scanner device type based on signature"""
+        
+        dc_offset, flatness, phase_noise, adc_bits, lo_noise, clock_ppm = feature_centroid
+        
+        # Classification rules based on typical scanner characteristics
+        if phase_noise < -120 and adc_bits >= 14 and clock_ppm <= 10:
+            return "Professional SDR Scanner"
+        elif lo_noise < -110 and adc_bits >= 12 and clock_ppm <= 100:
+            return "Commercial Digital Scanner"
+        elif adc_bits >= 10 and clock_ppm <= 1000:
+            return "Consumer Analog Scanner"
+        elif flatness > 10:
+            return "Wideband Scanner (SDR-based)"
+        else:
+            return "Unknown Scanner Type"
+    
+    def match_signature_against_database(self, observed_signature: Dict) -> List[Dict]:
+        """Match observed signature against known scanner database"""
+        matches = []
+        
+        # Load known signatures if not already loaded
+        if not self.known_scanner_signatures:
+            self._load_default_scanner_signatures()
+        
+        for scanner_id, known_sig in self.known_scanner_signatures.items():
+            similarity_score = self._calculate_signature_similarity(
+                observed_signature, known_sig
+            )
+            
+            if similarity_score > 0.7:  # 70% similarity threshold
+                matches.append({
+                    'scanner_id': scanner_id,
+                    'similarity': similarity_score,
+                    'confidence': min(similarity_score * 1.2, 1.0)
+                })
+        
+        return sorted(matches, key=lambda x: x['similarity'], reverse=True)
+    
+    def _load_default_scanner_signatures(self):
+        """Load default known scanner signatures"""
+        self.known_scanner_signatures = {
+            'uniden_bc125at': {
+                'dc_offset': -45.0,
+                'estimated_adc_bits': 12,
+                'clock_precision_ppm': 100,
+                'lo_phase_noise_db': -105,
+                'frequency_response_flatness': 3.5
+            },
+            'rtlsdr_generic': {
+                'dc_offset': -40.0,
+                'estimated_adc_bits': 8,
+                'clock_precision_ppm': 1000,
+                'lo_phase_noise_db': -95,
+                'frequency_response_flatness': 8.0
+            },
+            'hackrf_one': {
+                'dc_offset': -42.0,
+                'estimated_adc_bits': 8,
+                'clock_precision_ppm': 20,
+                'lo_phase_noise_db': -100,
+                'frequency_response_flatness': 5.0
+            },
+            'professional_scanner': {
+                'dc_offset': -50.0,
+                'estimated_adc_bits': 14,
+                'clock_precision_ppm': 10,
+                'lo_phase_noise_db': -120,
+                'frequency_response_flatness': 2.0
+            }
+        }
+    
+    def _calculate_signature_similarity(self, sig1: Dict, sig2: Dict) -> float:
+        """Calculate similarity between two signatures"""
+        common_keys = set(sig1.keys()) & set(sig2.keys())
+        if not common_keys:
+            return 0.0
+        
+        similarities = []
+        for key in common_keys:
+            if isinstance(sig1[key], (int, float)) and isinstance(sig2[key], (int, float)):
+                # Normalize the difference
+                max_val = max(abs(sig1[key]), abs(sig2[key]), 1e-6)
+                diff = abs(sig1[key] - sig2[key]) / max_val
+                similarity = max(0, 1 - diff)
+                similarities.append(similarity)
+        
+        return np.mean(similarities) if similarities else 0.0
+    
+    def generate_ioc_from_fingerprint(self, fingerprint: Dict, detection_data: Dict) -> Dict:
+        """Generate Indicator of Compromise from fingerprint and detection"""
+        
+        # Create unique IOC hash based on signature
+        signature_str = str(sorted(fingerprint.items()))
+        ioc_hash = hashlib.sha256(signature_str.encode()).hexdigest()[:16]
+        
+        ioc = {
+            'id': f"RF_SCAN_{ioc_hash}",
+            'type': 'rf_scanner_detection',
+            'first_seen': detection_data.get('timestamp', datetime.now().isoformat()),
+            'last_seen': detection_data.get('timestamp', datetime.now().isoformat()),
+            'device_id': fingerprint.get('device_id'),
+            'confidence': detection_data.get('confidence', 0),
+            'signature_hash': ioc_hash,
+            'threat_level': self._classify_ioc_threat_level(detection_data, fingerprint),
+            'attributes': {
+                'detection_type': detection_data.get('detection_type'),
+                'estimated_hardware': fingerprint.get('device_classification', 'Unknown'),
+                'scanner_matches': fingerprint.get('signature_matches', [])
+            }
+        }
+        
+        self.ioc_database[ioc['id']] = ioc
+        return ioc
+    
+    def _classify_ioc_threat_level(self, detection_data: Dict, fingerprint: Dict) -> str:
+        """Classify IOC threat level based on detection and fingerprint characteristics"""
+        confidence = detection_data.get('confidence', 0)
+        detection_type = detection_data.get('detection_type', '')
+        
+        # Hardware sophistication factor
+        adc_bits = fingerprint.get('estimated_adc_bits', 8)
+        clock_precision = fingerprint.get('clock_precision_ppm', 1000)
+        
+        if confidence > 0.9 and detection_type == 'targeted' and adc_bits >= 14 and clock_precision <= 10:
+            return 'CRITICAL'
+        elif confidence > 0.8 and detection_type in ['scanning', 'targeted'] and adc_bits >= 12:
+            return 'HIGH'
+        elif confidence > 0.6 and detection_type in ['scanning', 'targeted']:
+            return 'MEDIUM'
+        else:
+            return 'LOW'
+    
+    def _classify_device_from_fingerprint(self, fingerprint: Dict, cluster_analysis: Dict) -> str:
+        """Classify device based on fingerprint and cluster analysis"""
+        
+        # Check if device falls into a known cluster
+        device_id = fingerprint.get('device_id')
+        clusters = cluster_analysis.get('clusters', {})
+        
+        for cluster_id, cluster_info in clusters.items():
+            device_type = cluster_info.get('device_type', 'Unknown')
+            if device_type != 'Unknown Scanner Type':
+                return device_type
+        
+        # Fallback to individual analysis
+        adc_bits = fingerprint.get('estimated_adc_bits', 8)
+        clock_precision = fingerprint.get('clock_precision_ppm', 1000)
+        
+        if adc_bits >= 14 and clock_precision <= 10:
+            return "Professional Equipment"
+        elif adc_bits >= 12 and clock_precision <= 100:
+            return "Commercial Equipment"
+        else:
+            return "Consumer Equipment"
     
     def _analyze_hardware_signature(self, fft_data: np.ndarray) -> Dict:
         """Analyze hardware-specific characteristics"""
@@ -2131,6 +2410,126 @@ class RFScannerDetector:
             
         except Exception as e:
             logger.error(f"Failed to store enhanced detection: {e}")
+
+class ThreatIntelligenceIntegrator:
+    """Integration with threat intelligence feeds and databases"""
+    
+    def __init__(self):
+        self.known_scanner_signatures = {}
+        self.threat_feeds = []
+        self.ioc_database = {}
+        
+    # KEEP - Unique functionality
+    def load_scanner_database(self, database_file: str):
+        """Load known scanner signatures from database"""
+        try:
+            import json
+            with open(database_file, 'r') as f:
+                self.known_scanner_signatures = json.load(f)
+        except FileNotFoundError:
+            # Create empty database
+            self.known_scanner_signatures = {
+                'uniden_bc125at': {
+                    'frequency_step': 25000,
+                    'scan_rate': 100,  # channels per second
+                    'phase_noise_signature': 0.05,
+                    'rise_time': 0.02
+                },
+                'rtlsdr_generic': {
+                    'frequency_step': 1000000,
+                    'scan_rate': 50,
+                    'phase_noise_signature': 0.15,
+                    'rise_time': 0.001
+                }
+            }
+            self._save_scanner_database(database_file)
+    
+    # KEEP - Unique functionality
+    def _save_scanner_database(self, database_file: str):
+        """Save scanner signatures to database"""
+        import json
+        with open(database_file, 'w') as f:
+            json.dump(self.known_scanner_signatures, f, indent=2)
+    
+    # KEEP - Renamed to avoid conflict with rf_scanner_detection.py
+    def _classify_threat_level(self, detection_data: Dict) -> str:
+        """Classify threat level based on detection characteristics"""
+        confidence = detection_data.get('confidence', 0)
+        detection_type = detection_data.get('detection_type', '')
+        duration = detection_data.get('duration', 0)
+        
+        if confidence > 0.9 and detection_type == 'targeted' and duration > 300:
+            return 'HIGH'
+        elif confidence > 0.7 and detection_type in ['scanning', 'targeted']:
+            return 'MEDIUM'
+        else:
+            return 'LOW'
+
+class SIEMIntegrator:
+    """Integration with SIEM systems for centralized security monitoring"""
+    
+    def __init__(self, siem_config):
+        self.siem_endpoint = siem_config['endpoint']
+        self.api_key = siem_config['api_key']
+        self.source_identifier = "RF_Scanner_Detection_System"
+        
+    def send_detection_event(self, detection, enhanced_analysis=None):
+        """Send detection event to SIEM"""
+        
+        # Create SIEM event structure
+        event = {
+            "timestamp": detection.timestamp.isoformat(),
+            "source": self.source_identifier,
+            "event_type": "RF_RECONNAISSANCE_DETECTED",
+            "severity": self._calculate_severity(detection),
+            "fields": {
+                "frequency_mhz": detection.frequency / 1e6,
+                "signal_strength_dbm": detection.signal_strength,
+                "detection_type": detection.detection_type,
+                "confidence_score": detection.confidence,
+                "duration_seconds": detection.duration,
+                "metadata": detection.metadata
+            }
+        }
+        
+        # Add enhanced analysis if available
+        if enhanced_analysis:
+            event["fields"]["scanner_signature"] = enhanced_analysis.get('signature', {})
+            event["fields"]["scanner_matches"] = enhanced_analysis.get('scanner_matches', [])
+            event["fields"]["threat_ioc"] = enhanced_analysis.get('ioc', {})
+        
+        # Send to SIEM
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.api_key}',
+                'Content-Type': 'application/json'
+            }
+            
+            response = requests.post(
+                self.siem_endpoint,
+                headers=headers,
+                data=json.dumps(event),
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"SIEM event sent successfully: {event['event_type']}")
+            else:
+                logger.error(f"SIEM event failed: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            logger.error(f"SIEM integration error: {e}")
+    
+    def _calculate_severity(self, detection):
+        """Calculate SIEM severity level"""
+        if detection.confidence > 0.9:
+            return "CRITICAL"
+        elif detection.confidence > 0.7:
+            return "HIGH"
+        elif detection.confidence > 0.5:
+            return "MEDIUM"
+        else:
+            return "LOW"
 
 def check_for_updates():
     """Check if a newer version is available, force update if needed, and exit after update"""
