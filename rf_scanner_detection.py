@@ -2034,10 +2034,32 @@ class RFScannerDetector:
             ├─ First Seen: {device_tracking['first_seen'].strftime('%Y-%m-%d %H:%M:%S')}
             ├─ Time Active: {str(time_since_first).split('.')[0]}
             ├─ Total Detections: {device_tracking['detection_count']}
-            ├─ Primary Behavior: {self._analyze_primary_behavior(device_tracking.get('behavior_patterns', []))}
+            ├─ Primary Behavior: {self.analyzer._analyze_primary_behavior(device_tracking.get('behavior_patterns', []))}
             ├─ Persistence Level: {self._assess_persistence_level(device_tracking)}
             ├─ Fingerprint Stability: {self._assess_fingerprint_stability(device_tracking)}
             └─ Hardware Type: {self._identify_scanner_hardware_type(enhanced_fingerprint)}"""
+            else:
+                alert_msg += """
+            
+            DEVICE TRACKING:
+            └─ Status: NEW DEVICE - First Detection"""
+        else:
+            alert_msg += """
+            
+            DEVICE FINGERPRINT:
+            └─ Status: Basic fingerprinting only"""
+            
+            # Device tracking section
+            if device_tracking:
+                time_since_first = detection.timestamp - device_tracking['first_seen']
+                alert_msg += f"""
+            
+            DEVICE TRACKING:
+            ├─ First Seen: {device_tracking['first_seen'].strftime('%Y-%m-%d %H:%M:%S')}
+            ├─ Time Active: {str(time_since_first).split('.')[0]}
+            ├─ Total Detections: {device_tracking['detection_count']}
+            ├─ Primary Behavior: {self.analyzer._analyze_primary_behavior(device_tracking.get('behavior_patterns', []))}
+            └─ Persistence Level: {self._assess_persistence_level(device_tracking)}"""
             else:
                 alert_msg += """
             
