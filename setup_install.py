@@ -74,13 +74,13 @@ class RFScannerInstaller:
         self.system_packages = {
             'ubuntu': [
                 'gnuradio', 'gnuradio-dev', 'gr-osmosdr', 'hackrf', 
-                'libhackrf-dev', 'hackrf-tools', 'git', 'python3-pip',
+                'libhackrf-dev', 'git', 'python3-pip',
                 'python3-dev', 'build-essential', 'cmake', 'pkg-config',
                 'libusb-1.0-0-dev', 'libudev-dev'
             ],
             'debian': [
                 'gnuradio', 'gnuradio-dev', 'gr-osmosdr', 'hackrf',
-                'libhackrf-dev', 'hackrf-tools', 'git', 'python3-pip',
+                'libhackrf-dev', 'git', 'python3-pip',
                 'python3-dev', 'build-essential', 'cmake', 'pkg-config',
                 'libusb-1.0-0-dev', 'libudev-dev'
             ],
