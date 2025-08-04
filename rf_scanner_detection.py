@@ -551,6 +551,11 @@ class RFSpectrumAnalyzer:
             # Generate unique device ID
             fingerprint['device_id'] = self._generate_device_id(fingerprint)
             
+            # ADD ENHANCED CLASSIFICATION:
+            fingerprint['scanner_classification'] = self._classify_scanner_from_fingerprint(fingerprint, detection_metadata)
+            fingerprint['equipment_type'] = self._determine_equipment_type(fingerprint)
+            fingerprint['sophistication_level'] = self._assess_sophistication_level(fingerprint)
+            
             # ADD ADVANCED CLUSTERING ANALYSIS:
             # Perform signature clustering if we have enough signatures
             signature_list = list(self.scanner_fingerprints.values())
@@ -583,6 +588,117 @@ class RFSpectrumAnalyzer:
             fingerprint['error'] = str(e)
         
         return fingerprint
+    
+    def _classify_scanner_from_fingerprint(self, fingerprint: Dict, detection_metadata: Dict) -> str:
+        """Classify scanner type from complete fingerprint"""
+        
+        # Hardware characteristics
+        adc_bits = fingerprint.get('estimated_adc_bits', 8)
+        clock_precision = fingerprint.get('clock_precision_ppm', 1000)
+        phase_noise = fingerprint.get('lo_phase_noise_db', 0)
+        
+        # Behavioral characteristics
+        detection_type = detection_metadata.get('detection_type', '')
+        hop_rate = detection_metadata.get('hop_rate', 0)
+        channel_spacing = detection_metadata.get('channel_spacing', 0)
+        
+        # Professional equipment indicators
+        if adc_bits >= 14 and clock_precision <= 10 and phase_noise < -120:
+            if hop_rate > 100:
+                return "Professional High-Speed Scanner"
+            else:
+                return "Professional Surveillance Receiver"
+        
+        # Commercial equipment
+        elif adc_bits >= 12 and clock_precision <= 100:
+            if detection_type == 'scanning':
+                if channel_spacing == 12500:
+                    return "Commercial Narrowband Scanner"
+                elif channel_spacing == 25000:
+                    return "Commercial Wideband Scanner"
+                else:
+                    return "Commercial Digital Scanner"
+            else:
+                return "Commercial Monitoring Receiver"
+        
+        # Consumer equipment
+        elif adc_bits >= 8:
+            if hop_rate > 0 and hop_rate < 20:
+                return "Consumer Analog Scanner"
+            else:
+                return "Consumer Digital Scanner"
+        
+        # SDR-based
+        if fingerprint.get('frequency_response_flatness', 0) > 8:
+            return "SDR-Based Scanner (RTL-SDR/HackRF)"
+        
+        return "Unidentified Scanner Type"
+    
+    def _determine_equipment_type(self, fingerprint: Dict) -> str:
+        """Determine broad equipment category"""
+        
+        adc_bits = fingerprint.get('estimated_adc_bits', 8)
+        image_rejection = fingerprint.get('image_rejection_db', 0)
+        spurious_count = fingerprint.get('spurious_count', 0)
+        
+        if adc_bits >= 14 and image_rejection > 60 and spurious_count < 2:
+            return "Professional Communications Equipment"
+        elif adc_bits >= 12 and image_rejection > 40:
+            return "Commercial Radio Equipment"
+        elif spurious_count > 5:
+            return "Consumer/Hobby Equipment"
+        else:
+            return "Unknown Equipment Type"
+    
+    def _assess_sophistication_level(self, fingerprint: Dict) -> str:
+        """Assess overall sophistication level"""
+        
+        sophistication_score = 0
+        
+        # Hardware sophistication
+        if fingerprint.get('estimated_adc_bits', 8) >= 14:
+            sophistication_score += 3
+        elif fingerprint.get('estimated_adc_bits', 8) >= 12:
+            sophistication_score += 2
+        elif fingerprint.get('estimated_adc_bits', 8) >= 10:
+            sophistication_score += 1
+        
+        # Clock precision
+        clock_ppm = fingerprint.get('clock_precision_ppm', 1000)
+        if clock_ppm <= 1:
+            sophistication_score += 3
+        elif clock_ppm <= 10:
+            sophistication_score += 2
+        elif clock_ppm <= 100:
+            sophistication_score += 1
+        
+        # Phase noise performance
+        phase_noise = fingerprint.get('lo_phase_noise_db', 0)
+        if phase_noise < -130:
+            sophistication_score += 3
+        elif phase_noise < -120:
+            sophistication_score += 2
+        elif phase_noise < -110:
+            sophistication_score += 1
+        
+        # Image rejection
+        image_rejection = fingerprint.get('image_rejection_db', 0)
+        if image_rejection > 80:
+            sophistication_score += 2
+        elif image_rejection > 60:
+            sophistication_score += 1
+        
+        # Classify based on total score
+        if sophistication_score >= 8:
+            return "Military/Intelligence Grade"
+        elif sophistication_score >= 6:
+            return "Professional Grade"
+        elif sophistication_score >= 4:
+            return "Commercial Grade"
+        elif sophistication_score >= 2:
+            return "Consumer Grade"
+        else:
+            return "Entry Level"
 
     def cluster_scanner_signatures(self, signatures: List[Dict]) -> Dict:
         """Cluster similar scanner signatures to identify device types"""
