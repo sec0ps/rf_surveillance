@@ -452,18 +452,41 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="cc15", GROUP="plugde
         except ImportError as e:
             self.logger.error(f"? Python dependency failed: {e}")
             return False
-    
+
     def _test_gnuradio(self) -> bool:
         """Test GNU Radio installation"""
         
         try:
             import gnuradio
-            version = gnuradio.version()
+            
+            # Try different ways to get version depending on GNU Radio version
+            version = "unknown"
+            try:
+                # GNU Radio 3.8+
+                version = gnuradio.version()
+            except AttributeError:
+                try:
+                    # GNU Radio 3.9+
+                    from gnuradio import gr
+                    version = gr.version()
+                except AttributeError:
+                    try:
+                        # GNU Radio 3.10+
+                        import gnuradio.gr as gr
+                        version = gr.version()
+                    except (AttributeError, ImportError):
+                        # Fallback - just check if we can import core modules
+                        from gnuradio import gr, blocks
+                        version = "installed (version detection failed)"
+            
             self.logger.info(f"? GNU Radio working (version: {version})")
             return True
             
         except ImportError as e:
             self.logger.error(f"? GNU Radio import failed: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"? GNU Radio test failed: {e}")
             return False
     
     def _test_osmosdr(self) -> bool:
