@@ -94,7 +94,7 @@ class RFScannerInstaller:
                 'gnuradio', 'hackrf', 'git', 'python3'
             ]
         }
-        
+
         self.python_packages = [
             'numpy>=1.21.0',
             'scipy>=1.7.0', 
@@ -103,7 +103,8 @@ class RFScannerInstaller:
             'scikit-learn>=1.0.0',
             'seaborn>=0.11.0',
             'requests>=2.25.0',
-            'psutil>=5.8.0'
+            'psutil>=5.8.0',
+            'packaging>=21.0'  # ADD THIS - needed for version checking
         ]
     
     def check_prerequisites(self) -> Dict:
