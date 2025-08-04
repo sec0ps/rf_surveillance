@@ -64,52 +64,7 @@ class AdvancedSignalAnalyzer:
         self.signature_database = {}
         self.scanner_fingerprints = {}
         
-    def analyze_modulation_signature(self, iq_data: np.ndarray, sample_rate: float) -> Dict:
-        """Analyze modulation characteristics to fingerprint scanner devices"""
-        
-        # Extract signal features
-        instantaneous_phase = np.unwrap(np.angle(iq_data))
-        instantaneous_freq = np.diff(instantaneous_phase) * sample_rate / (2 * np.pi)
-        
-        # Calculate spectral features
-        freqs, psd = signal.welch(iq_data, sample_rate, nperseg=1024)
-        spectral_centroid = np.sum(freqs * psd) / np.sum(psd)
-        spectral_bandwidth = np.sqrt(np.sum(((freqs - spectral_centroid) ** 2) * psd) / np.sum(psd))
-        
-        # Timing analysis
-        envelope = np.abs(signal.hilbert(np.real(iq_data)))
-        rise_time = self._calculate_rise_time(envelope)
-        
-        # Phase noise analysis
-        phase_noise = np.var(np.diff(instantaneous_phase))
-        
-        signature = {
-            'spectral_centroid': spectral_centroid,
-            'spectral_bandwidth': spectral_bandwidth,
-            'phase_noise': phase_noise,
-            'rise_time': rise_time,
-            'freq_deviation': np.std(instantaneous_freq),
-            'signal_entropy': self._calculate_entropy(envelope)
-        }
-        
-        return signature
-    
-    def _calculate_rise_time(self, envelope: np.ndarray) -> float:
-        """Calculate signal rise time (10% to 90% of peak)"""
-        peak_value = np.max(envelope)
-        rise_start = np.where(envelope > 0.1 * peak_value)[0]
-        rise_end = np.where(envelope > 0.9 * peak_value)[0]
-        
-        if len(rise_start) > 0 and len(rise_end) > 0:
-            return (rise_end[0] - rise_start[0]) / len(envelope)
-        return 0.0
-    
-    def _calculate_entropy(self, signal_data: np.ndarray) -> float:
-        """Calculate signal entropy for randomness analysis"""
-        hist, _ = np.histogram(signal_data, bins=50, density=True)
-        hist = hist[hist > 0]  # Remove zero bins
-        return -np.sum(hist * np.log2(hist))
-    
+    # KEEP - This is unique functionality not in rf_scanner_detection.py
     def cluster_scanner_signatures(self, signatures: List[Dict]) -> Dict:
         """Cluster similar scanner signatures to identify device types"""
         
@@ -154,7 +109,7 @@ class AdvancedSignalAnalyzer:
                 'count': len(cluster_indices),
                 'centroid': np.mean(cluster_features, axis=0),
                 'std': np.std(cluster_features, axis=0),
-                'device_type': self._classify_device_type(np.mean(cluster_features, axis=0))
+                'device_type': self._classify_device_from_cluster(np.mean(cluster_features, axis=0))
             }
         
         return {
@@ -163,7 +118,8 @@ class AdvancedSignalAnalyzer:
             'n_clusters': len(unique_clusters) - (1 if -1 in unique_clusters else 0)
         }
     
-    def _classify_device_type(self, feature_centroid: np.ndarray) -> str:
+    # KEEP - Rename to avoid conflict with rf_scanner_detection.py
+    def _classify_device_from_cluster(self, feature_centroid: np.ndarray) -> str:
         """Classify scanner device type based on signature"""
         
         spectral_centroid, spectral_bandwidth, phase_noise, rise_time, freq_dev, entropy = feature_centroid
@@ -188,6 +144,7 @@ class ThreatIntelligenceIntegrator:
         self.threat_feeds = []
         self.ioc_database = {}
         
+    # KEEP - Unique functionality
     def load_scanner_database(self, database_file: str):
         """Load known scanner signatures from database"""
         try:
@@ -212,18 +169,20 @@ class ThreatIntelligenceIntegrator:
             }
             self._save_scanner_database(database_file)
     
+    # KEEP - Unique functionality
     def _save_scanner_database(self, database_file: str):
         """Save scanner signatures to database"""
         import json
         with open(database_file, 'w') as f:
             json.dump(self.known_scanner_signatures, f, indent=2)
     
+    # KEEP - Unique functionality
     def match_signature(self, observed_signature: Dict) -> List[Dict]:
         """Match observed signature against known scanner database"""
         matches = []
         
         for scanner_id, known_sig in self.known_scanner_signatures.items():
-            similarity_score = self._calculate_signature_similarity(
+            similarity_score = self._calculate_similarity_score(
                 observed_signature, known_sig
             )
             
@@ -236,7 +195,8 @@ class ThreatIntelligenceIntegrator:
         
         return sorted(matches, key=lambda x: x['similarity'], reverse=True)
     
-    def _calculate_signature_similarity(self, sig1: Dict, sig2: Dict) -> float:
+    # KEEP - Renamed to avoid conflict
+    def _calculate_similarity_score(self, sig1: Dict, sig2: Dict) -> float:
         """Calculate similarity between two signatures"""
         common_keys = set(sig1.keys()) & set(sig2.keys())
         if not common_keys:
@@ -253,6 +213,7 @@ class ThreatIntelligenceIntegrator:
         
         return np.mean(similarities) if similarities else 0.0
     
+    # KEEP - Unique functionality
     def generate_ioc(self, detection_data: Dict) -> Dict:
         """Generate Indicator of Compromise from detection"""
         
@@ -268,7 +229,7 @@ class ThreatIntelligenceIntegrator:
             'frequency': detection_data.get('frequency'),
             'confidence': detection_data.get('confidence'),
             'signature_hash': ioc_hash,
-            'threat_level': self._assess_threat_level(detection_data),
+            'threat_level': self._classify_threat_level(detection_data),
             'attributes': {
                 'detection_type': detection_data.get('detection_type'),
                 'signal_strength': detection_data.get('signal_strength'),
@@ -279,8 +240,9 @@ class ThreatIntelligenceIntegrator:
         self.ioc_database[ioc['id']] = ioc
         return ioc
     
-    def _assess_threat_level(self, detection_data: Dict) -> str:
-        """Assess threat level based on detection characteristics"""
+    # KEEP - Renamed to avoid conflict with rf_scanner_detection.py
+    def _classify_threat_level(self, detection_data: Dict) -> str:
+        """Classify threat level based on detection characteristics"""
         confidence = detection_data.get('confidence', 0)
         detection_type = detection_data.get('detection_type', '')
         duration = detection_data.get('duration', 0)
@@ -485,41 +447,10 @@ class ReportingAndVisualization:
         """
         
         return html_template
-
-class EnhancedRFDetector:
-    """Enhanced RF detector with all advanced features"""
-    
-    def __init__(self):
-        self.signal_analyzer = AdvancedSignalAnalyzer()
-        self.threat_intel = ThreatIntelligenceIntegrator()
-        self.reporting = ReportingAndVisualization()
-
-    def process_enhanced_detection(self, detection_data: Dict, iq_data: np.ndarray = None):
-        """Process detection with all advanced analysis"""
-        
-        results = {
-            'basic_detection': detection_data,
-            'enhanced_analysis': {}
-        }
-        
-        # Signal signature analysis
-        if iq_data is not None:
-            signature = self.signal_analyzer.analyze_modulation_signature(
-                iq_data, detection_data.get('sample_rate', 2e6)
-            )
-            results['enhanced_analysis']['signature'] = signature
-            
-            # Match against known scanners
-            matches = self.threat_intel.match_signature(signature)
-            results['enhanced_analysis']['scanner_matches'] = matches
-        
-        # Generate IOC
-        ioc = self.threat_intel.generate_ioc(detection_data)
-        results['enhanced_analysis']['ioc'] = ioc
-        
-        return results
         
 class AutomatedResponseSystem:
+    """Automated response system for RF scanner detections"""
+    
     def __init__(self):
         self.response_rules = []
         self.active_responses = {}
@@ -621,6 +552,8 @@ class AutomatedResponseSystem:
         logger.critical(f"SECURITY INCIDENT [{severity}] {category}: Scanner detected at {detection.frequency/1e6:.3f} MHz")
 
 class SIEMIntegrator:
+    """Integration with SIEM systems for centralized security monitoring"""
+    
     def __init__(self, siem_config):
         self.siem_endpoint = siem_config['endpoint']
         self.api_key = siem_config['api_key']
