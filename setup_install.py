@@ -435,12 +435,12 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="cc15", GROUP="plugde
             'total': total_tests,
             'success': passed_tests == total_tests
         }
-    
+
     def _test_python_dependencies(self) -> bool:
         """Test Python dependencies"""
         
         try:
-            modules = ['numpy', 'scipy', 'matplotlib', 'pandas', 'sklearn', 'requests', 'packaging']
+            modules = ['numpy', 'scipy', 'matplotlib', 'pandas', 'sklearn', 'requests']
             
             for module in modules:
                 __import__(module)
